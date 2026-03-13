@@ -1,4 +1,4 @@
-# K-pic Protocol Spec v0 (MVP v0.2)
+﻿# ko-pic Protocol Spec v0 (MVP v0.2)
 
 ## 1. 목적
 
@@ -569,3 +569,4 @@ drawer 전용.
 4. Server -> Client 상태/화면 이벤트 송신
 5. 입장 성공 시 `301 + 408` 즉시 전송
 6. 불일치 시 `106` 요청으로 `408` 재동기화
+

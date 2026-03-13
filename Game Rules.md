@@ -1,4 +1,4 @@
-# K-pic Game Rules (MVP v0.2)
+﻿# ko-pic Game Rules (MVP v0.2)
 
 ## 1. 목적
 
@@ -219,3 +219,4 @@ MVP는 `at-most-once` 전달 모델을 사용한다.
 - WS 레벨 재전송 없음
 - 순서/중복 제어는 GE에서 room 단위 라우팅과 TTL 기반 중복 처리로 보완
 - 상태 불일치 시 클라이언트는 `GAME_SNAPSHOT_REQUEST`로 복구
+
