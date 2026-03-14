@@ -1,3 +1,25 @@
 spring:
   application:
     name: kopic-ws
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+kopic:
+  node-id: ws-local
+  ws:
+    endpoint: /ws
+    max-text-message-size: 8192
+  redis:
+    room-owner-key-prefix: room:owner:
+    engine-route-key-prefix: engine:route:
+  rabbit:
+    outbound-exchange: kopic.engine.outbound
+    inbound-queue-prefix: kopic.ws.node.
+    inbound-routing-key-prefix: ws.node.

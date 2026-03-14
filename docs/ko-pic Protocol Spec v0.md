@@ -2,11 +2,19 @@
 
 ## 1. 목적
 
-이 문서는 MVP 기준의 `Client <-> WS` 메시지 규격을 정의한다.
+이 문서는 MVP 기준의 `Client <-> WS` runtime 메시지 규격을 정의한다.
 
 - 방 참여/게임 진행/그림-추측 전달
 - 중간입장 상태 복구(`GAME_SNAPSHOT`)
 - 간단하고 해석 여지 없는 필드 규격
+
+범위:
+
+- private 방 생성, random 매칭 요청은 `Lobby`의 HTTP API가 담당한다.
+- 이 문서는 방 생성 이후, 참여한 클라이언트와 WS 사이의 runtime 프로토콜만 다룬다.
+- 클라이언트는 WS 연결 시 `roomId`를 함께 전달한다.
+- WS는 `afterConnectionEstablished` 단계에서 내부 join 처리를 GE에 전달하며, 연결 성립 이후 room 참여를 완료한다.
+- 내부 join RPC는 `ack/error`만 반환하고, 실제 서버 이벤트(`301`, `408` 등)는 GE -> WS outbound 경로로 전달된다.
 
 ---
 
@@ -31,6 +39,7 @@
 - 클라이언트가 보낸 `rid`는 서버 응답 이벤트/에러에 가능한 한 그대로 포함.
 - 정의되지 않은 이벤트 코드는 `ERROR(3)`로 응답.
 - 클라가 보내면 안 되는 메타(`userId`, `roomId`, server time)는 서버가 채움.
+- `roomId`는 runtime envelope 안에서 매번 보내지 않고, WS 연결 컨텍스트에서 확정한다.
 
 ---
 
@@ -53,7 +62,7 @@
 
 ```text
 0xx  연결/공통
-1xx  방/대기실 입력
+1xx  room/runtime 입력
 2xx  게임 입력
 3xx  상태 이벤트
 4xx  화면/결과 이벤트
@@ -99,45 +108,18 @@
 
 ---
 
-## 5.2 방/대기실 입력 (Client -> WS)
+## 5.2 room/runtime 입력 (Client -> WS)
 
-### 101 ROOM_CREATE_PRIVATE
+### 101 RESERVED
 
-```json
-{
-  "e": 101,
-  "rid": "c-1",
-  "p": { "nickname": "jhp" }
-}
-```
+- private 방 생성과 random 매칭 요청은 WS가 아니라 `Lobby`의 HTTP API가 처리한다.
+- 이벤트 코드 `101`은 WS runtime 프로토콜에서 사용하지 않는다.
 
-응답 성공 시:
+### 102 RESERVED
 
-- `301 ROOM_STATE`
-- `408 GAME_SNAPSHOT` (게임 전이면 `game.status = "LOBBY"`)
-
-### 102 ROOM_JOIN
-
-```json
-{
-  "e": 102,
-  "rid": "c-2",
-  "p": {
-    "roomCode": "A1B2C3",
-    "nickname": "jhp"
-  }
-}
-```
-
-규칙:
-
-- private 초대링크 진입도 내부적으로 `roomCode`를 포함한 동일 요청 사용.
-- random 확장 시 `roomCode` 없는 매칭요청 모드 허용 가능.
-
-응답 성공 시:
-
-- `301 ROOM_STATE`
-- `408 GAME_SNAPSHOT` 즉시 전송
+- client-originated `ROOM_JOIN` 이벤트는 사용하지 않는다.
+- `roomId`는 WS handshake 컨텍스트에서 받는다.
+- 실제 join 처리는 WS가 `afterConnectionEstablished` 단계에서 내부적으로 GE에 전달한다.
 
 ### 103 ROOM_LEAVE
 
@@ -563,10 +545,11 @@ drawer 전용.
 
 ## 8. 처리 흐름 요약
 
-1. Client -> WS (`e`, `p`, optional `rid`)
-2. WS 기본 검증/세션 결합
-3. RoomServer/GE 라우팅 (roomId 기준 일관 라우팅)
-4. Server -> Client 상태/화면 이벤트 송신
-5. 입장 성공 시 `301 + 408` 즉시 전송
-6. 불일치 시 `106` 요청으로 `408` 재동기화
-
+1. Client -> Lobby HTTP (방 생성/매칭 등 pre-entry flow, 본 문서 범위 밖)
+2. Lobby가 room 생성 및 owner GE 배정
+3. Client -> WS 연결 시 `roomId` 전달
+4. WS가 `afterConnectionEstablished` 단계에서 내부 join을 GE에 전달
+5. 참여 완료 후 `301 + 408`은 GE -> WS outbound 경로로 전달
+6. 이후 모든 runtime 요청은 세션의 `roomId` 기준으로 GE에 라우팅
+7. Server -> Client 상태/화면 이벤트 송신
+8. 불일치 시 `106` 요청으로 `408` 재동기화
