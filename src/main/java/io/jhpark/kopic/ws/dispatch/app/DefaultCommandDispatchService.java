@@ -9,9 +9,11 @@ import io.jhpark.kopic.ws.ingress.dto.ClientEnvelope;
 import io.jhpark.kopic.ws.engine.app.SessionLifecycleEvent;
 import io.jhpark.kopic.ws.engine.app.SessionLifecycleType;
 import io.jhpark.kopic.ws.session.domain.WsSession;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Service
+@Slf4j
 public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	private static final int EVENT_PING = 1;
@@ -33,6 +35,7 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleConnected(WsSession session) {
+		log.info("dispatch connected userId={} roomId={}", session.getUserId(), session.getRoomId());
 		if (!gameEngineClient.send(new SessionLifecycleEvent(
 			session.getRoomId(),
 			session.getUserId(),
@@ -45,7 +48,9 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleMessage(WsSession session, ClientEnvelope envelope) {
+		log.info("dispatch message userId={} roomId={} eventCode={} requestId={}", session.getUserId(), session.getRoomId(), envelope.eventCode(), envelope.requestId());
 		if (envelope.eventCode() == EVENT_PING) {
+			log.info("dispatch ping->pong userId={} roomId={} requestId={}", session.getUserId(), session.getRoomId(), envelope.requestId());
 			sessionDeliveryPort.deliver(
 				session.getUserId(),
 				new ServerEnvelope(EVENT_PONG, objectMapper.createObjectNode(), envelope.requestId())
@@ -65,6 +70,7 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleDisconnected(WsSession session) {
+		log.info("dispatch disconnected userId={} roomId={}", session.getUserId(), session.getRoomId());
 		if (!gameEngineClient.send(new SessionLifecycleEvent(
 			session.getRoomId(),
 			session.getUserId(),

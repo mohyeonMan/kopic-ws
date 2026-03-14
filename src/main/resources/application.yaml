@@ -17,9 +17,9 @@ kopic:
     endpoint: /ws
     max-text-message-size: 8192
   redis:
-    room-owner-key-prefix: room:owner:
-    engine-route-key-prefix: engine:route:
+    room-owner-key-prefix: "room:owner:"
+    engine-route-key-prefix: "engine:route:"
   rabbit:
     outbound-exchange: kopic.engine.outbound
-    inbound-queue-prefix: kopic.ws.node.
-    inbound-routing-key-prefix: ws.node.
+    inbound-queue-prefix: "kopic.ws.node."
+    inbound-routing-key-prefix: "ws.node."

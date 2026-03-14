@@ -7,9 +7,11 @@ import io.jhpark.kopic.ws.routing.domain.EngineRoute;
 import io.jhpark.kopic.ws.routing.infra.redis.RoomDirectoryRedisTemplate;
 import java.time.Duration;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class CaffeineRoomDirectory implements RoomDirectory {
 
 	private static final Duration ROOM_OWNER_TTL = Duration.ofMinutes(15);
@@ -37,8 +39,10 @@ public class CaffeineRoomDirectory implements RoomDirectory {
 			return Optional.empty();
 		}
 
-		return roomOwners.get(roomId, this::loadOwnerEngineId)
+		Optional<EngineRoute> route = roomOwners.get(roomId, this::loadOwnerEngineId)
 			.flatMap(engineId -> engineRoutes.get(engineId, this::loadEngineRoute));
+		log.info("room directory findOwner roomId={} hit={}", roomId, route.isPresent());
+		return route;
 	}
 
 	@Override
@@ -82,10 +86,14 @@ public class CaffeineRoomDirectory implements RoomDirectory {
 	}
 
 	private Optional<String> loadOwnerEngineId(String roomId) {
-		return roomDirectoryRedisTemplate.getOwnerEngineId(roomId);
+		Optional<String> engineId = roomDirectoryRedisTemplate.getOwnerEngineId(roomId);
+		log.info("room directory load owner roomId={} engineId={}", roomId, engineId.orElse(null));
+		return engineId;
 	}
 
 	private Optional<EngineRoute> loadEngineRoute(String engineId) {
-		return roomDirectoryRedisTemplate.getEngineRoute(engineId);
+		Optional<EngineRoute> route = roomDirectoryRedisTemplate.getEngineRoute(engineId);
+		log.info("room directory load route engineId={} hit={}", engineId, route.isPresent());
+		return route;
 	}
 }

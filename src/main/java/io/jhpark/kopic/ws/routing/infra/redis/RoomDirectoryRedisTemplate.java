@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class RoomDirectoryRedisTemplate {
 
+	// TODO: Remove this fallback once Lobby/GE populate Redis room directory and engine routes.
 	private static final String DEFAULT_ENGINE_ID = "ge-local";
 	private static final EngineRoute DEFAULT_ENGINE_ROUTE = new EngineRoute(DEFAULT_ENGINE_ID, "localhost", 6565);
 

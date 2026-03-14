@@ -11,6 +11,7 @@ import io.jhpark.kopic.ws.session.domain.WsSession;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Instant;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -18,6 +19,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Component
+@Slf4j
 public class WebSocketConnectionHandler extends TextWebSocketHandler {
 
 	private final SessionRegistry sessionRegistry;
@@ -52,9 +54,12 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 			Instant.now()
 		);
 		sessionRegistry.save(wsSession);
+		log.info("ws connected sessionId={} userId={} roomId={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId());
 		try {
 			commandDispatchService.handleConnected(wsSession);
+			log.info("ws internal join requested sessionId={} userId={} roomId={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId());
 		} catch (EngineRequestRejectedException exception) {
+			log.warn("ws internal join rejected sessionId={} userId={} roomId={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId());
 			sessionRegistry.remove(session.getId());
 			closeQuietly(session, CloseStatus.SERVER_ERROR);
 		}
@@ -64,17 +69,21 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 	protected void handleTextMessage(WebSocketSession session, TextMessage message) {
 		sessionRegistry.touch(session.getId(), Instant.now()).ifPresent(touchedSession -> {
 			try {
+				log.info("ws inbound sessionId={} userId={} roomId={} payloadSize={}", session.getId(), touchedSession.getUserId(), touchedSession.getRoomId(), message.getPayloadLength());
 				commandDispatchService.handleMessage(touchedSession, envelopeValidator.validate(message.getPayload()));
 			} catch (InvalidEnvelopeException exception) {
+				log.warn("ws invalid envelope sessionId={} error={}", session.getId(), exception.getMessage());
 				sendError(session, 901, "INVALID_PAYLOAD", null);
 			} catch (EngineRequestRejectedException exception) {
-				sendError(session, 909, "ENGINE_REJECTED", null);
+				log.warn("ws engine rejected sessionId={} error={}", session.getId(), exception.getMessage());
+				sendError(session, 909, "INTERNAL_ERROR", null);
 			}
 		});
 	}
 
 	@Override
 	public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+		log.info("ws disconnected sessionId={} code={} reason={}", session.getId(), status.getCode(), status.getReason());
 		sessionRegistry.findBySessionId(session.getId()).ifPresent(commandDispatchService::handleDisconnected);
 		sessionRegistry.remove(session.getId());
 	}
@@ -89,6 +98,7 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 
 	private void sendError(WebSocketSession session, int code, String message, String requestId) {
 		try {
+			log.info("ws outbound error sessionId={} code={} message={} requestId={}", session.getId(), code, message, requestId);
 			ObjectNode payload = objectMapper.createObjectNode();
 			payload.put("code", code);
 			payload.put("message", message);
@@ -97,6 +107,7 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 			ServerEnvelope envelope = new ServerEnvelope(3, payload, requestId);
 			session.sendMessage(new TextMessage(objectMapper.writeValueAsString(envelope)));
 		} catch (Exception exception) {
+			log.warn("ws error send failed sessionId={} code={} cause={}", session.getId(), code, exception.getMessage());
 			closeQuietly(session, CloseStatus.SERVER_ERROR);
 		}
 	}

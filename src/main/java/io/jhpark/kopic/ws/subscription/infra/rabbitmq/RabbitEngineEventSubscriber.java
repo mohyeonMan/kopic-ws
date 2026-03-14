@@ -3,10 +3,12 @@ package io.jhpark.kopic.ws.subscription.infra.rabbitmq;
 import io.jhpark.kopic.ws.egress.app.SessionDeliveryPort;
 import io.jhpark.kopic.ws.subscription.app.EngineEventSubscriber;
 import io.jhpark.kopic.ws.subscription.app.InboundEngineEvent;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class RabbitEngineEventSubscriber implements EngineEventSubscriber {
 
 	private final SessionDeliveryPort sessionDeliveryPort;
@@ -17,6 +19,7 @@ public class RabbitEngineEventSubscriber implements EngineEventSubscriber {
 
 	@Override
 	public void handle(InboundEngineEvent event) {
+		log.info("rabbit inbound userId={} eventCode={} requestId={}", event.userId(), event.envelope().eventCode(), event.envelope().requestId());
 		sessionDeliveryPort.deliver(event.userId(), event.envelope());
 	}
 
