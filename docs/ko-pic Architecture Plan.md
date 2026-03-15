@@ -35,7 +35,7 @@
 
 3. `Lobby` 서버
 - 클라이언트의 HTTP entry 담당
-- 방 생성, 랜덤 매칭, room owner GE 배정 담당
+- 방 생성, random quick-join, room owner GE 배정 담당
 
 보조 인프라:
 
@@ -66,16 +66,17 @@
 
 4. Lobby
 - `ROOM_CREATE_PRIVATE` 처리
-- 랜덤 매칭 큐 관리/성립
-- room 생성 시 owner GE 배정
-- Directory 등록(`roomId -> owner GE`)
+- random quick-join 처리
+- room 생성 요청 시 owner GE 배정
+- owner GE로 생성/참여 요청 전달
 - GE 내부 room runtime 상태를 소유하지 않음
 - client-facing HTTP API를 제공하고, WS runtime path에는 참여하지 않음
 
 5. Redis
-- room 디렉토리(`room:{id} -> ownerGE`)
-- owner lease/TTL heartbeat
-- snapshot 캐시(선택), 보조 presence(선택)
+- room routing hint(`room:{id} -> ownerGE`)
+- random room joinable index(`rooms:random:joinable`)
+- engine presence
+- snapshot 캐시(선택)
 
 6. 영속 저장소(선택)
 - PostgreSQL: 전적/게임 결과/운영 로그 저장
@@ -122,10 +123,10 @@
 
 2. GE 수평 확장
 - HPA 기준: CPU + `active_rooms` 커스텀 메트릭
-- room 이동(리샤딩)은 초기엔 최소화, 장기적으로 drain + migrate 전략 도입
+- scale-out 시 신규 room 배정은 `ACTIVE` GE 중 `activeRooms`가 가장 적은 엔진을 우선 선택한다.
 
 3. 장애 시
-- GE Pod 장애 발생 시 room directory TTL 만료/재할당
+- GE Pod 장애 발생 시 stale routing hint를 기준으로 복구/재할당
 - 클라이언트는 `106`으로 재동기화
 
 4. WS 연결 분산
@@ -134,7 +135,7 @@
 - k3s/Ingress 레벨에서 `roomId` 기반 sticky routing은 사용하지 않음
 
 5. Directory 캐시 정책
-- 전역 authoritative directory는 Redis를 사용한다.
+- 전역 authoritative routing hint는 Redis를 사용한다.
 - 각 노드는 로컬 조회 최적화를 위해 Caffeine cache를 사용한다.
 - directory는 2단 캐시로 관리한다.
   - `roomId -> ownerEngineId`
@@ -145,15 +146,45 @@
 - `NOT_OWNER` 발생 시 `roomId -> ownerEngineId` cache는 즉시 invalidate 후 재조회한다.
 - route connect failure 발생 시 `engineId -> EngineRoute` cache는 즉시 invalidate 후 재조회한다.
 - `nodeId`는 WS pod의 고유값을 그대로 사용한다(예: pod name).
+- cache TTL은 평상시 조회 최적화를 위한 값이며, scale-in migration 정합성을 보장하는 수단으로 사용하지 않는다.
+- migration 시 WS는 TTL 만료를 기다리지 않고, owner mismatch 응답을 캐시 무효화 트리거로 사용한다.
+- 권장 흐름은 `cached route 시도 -> NOT_OWNER 수신 -> cache invalidate -> Redis 재조회 -> 1회 재전송`이다.
+- source GE가 아직 handoff 중인 경우에는 `MIGRATING` 성격의 일시 오류를 반환할 수 있고, WS는 짧은 backoff 후 directory 재조회 또는 client 재시도를 유도한다.
 
 6. GE room registry
 - 각 GE는 자신이 소유한 room actor/state를 메모리에 유지한다.
 - GE 내부 room registry는 idle room 정리를 위해 Caffeine 같은 in-memory cache를 사용할 수 있다.
 - room registry의 목적은 authoritative runtime 상태 보유 + 미사용 room 자동 정리다.
 - 제거 기준은 단순 access 하나로 고정하지 않고 room 상태에 따라 나눈다.
-  - 생성 후 아직 입장자가 없는 pending room
+  - 아무도 들어오지 않은 0명 room
   - 모든 참여자가 떠난 empty room
   - 게임 종료 후 정리 가능한 ended room
+
+7. GE scale-in migration 전략
+- `private` room은 한 게임 종료 후에도 대기실 상태로 계속 유지될 수 있으므로, 단순 drain-only 전략만으로는 scale-in이 성립하지 않는다.
+- scale-in 시 `GE`는 `DRAINING` 상태로 전환되고, `Lobby`는 해당 GE에 신규 room을 배정하지 않는다.
+- 여기서 `DRAINING`은 "자연 종료 대기"보다 "신규 배정 중단 + migration 진행" 상태를 의미한다.
+- `RUNNING` 상태 room은 source GE가 현재 게임을 끝까지 책임진다.
+- game runtime이 끝나 room이 다시 `LOBBY` 상태가 되면, source GE는 그 room을 migration 후보로 올린다.
+- migration은 `LOBBY` 상태 room만 대상으로 한다.
+- migration 중 room은 `MIGRATING` 상태로 잠그고, 새 `GAME_START_REQUEST`는 받지 않는다.
+- `Lobby`는 migration coordinator로서 target GE를 선택하고 handoff 절차를 조정한다.
+- 실제 room snapshot 생성과 import는 `GE`가 담당한다.
+- `roomId -> ownerEngineId` owner pointer 갱신은 target GE import 성공 이후에만 수행한다.
+- import 성공 전까지 source GE가 authoritative owner를 유지한다.
+- handoff 완료 후 source GE는 기존 room actor/state를 제거한다.
+- 이 전략은 진행 중 게임 정합성을 깨지 않으면서, game 종료 시점에 waiting room을 다른 GE로 재배치하기 위한 절충안이다.
+
+8. Migration snapshot 범위
+- scale-in migration의 대상은 `LOBBY` 상태 room이다.
+- snapshot에는 최소한 아래 정보가 포함되어야 한다.
+  - `roomId`, `roomType`, `roomCode`
+  - `hostUserId`
+  - participant 목록
+  - 다음 게임 설정
+  - room 상태 버전/메타데이터
+- 현재 turn/canvas/timer/score 같은 `RUNNING` runtime 상태는 scale-in migration 대상에서 제외한다.
+- 장기적으로 in-game migration을 검토할 수는 있으나, 초기 운영 전략은 game 종료 후 room handoff에 집중한다.
 
 ---
 
@@ -232,7 +263,7 @@
 
 - WS/GE/Lobby 3노드를 논리적으로 분리해 구현
 - 필요 시 운영 단순화를 위해 WS+GE를 동일 Pod로 배치 가능
-- Redis는 room directory 중심 최소 도입
+- Redis는 room routing hint 중심 최소 도입
 - 목표: 룰/프로토콜 정확도 우선
 
 ### Phase 2 (분리/확장)
@@ -240,11 +271,12 @@
 - WS/GE 물리 분리 고정
 - room 샤딩 및 라우팅 고도화
 - 커스텀 메트릭 기반 HPA 적용
+- `LOBBY` 상태 room 기준 scale-in migration 도입
 
 ### Phase 3 (고가용성/운영성 강화)
 
 - MQ 도입(필요 시, GE->WS fan-out 전용)
-- room drain/migration
+- running game migration 검토
 - 장애 복구 자동화, 운영 대시보드 강화
 
 ---
@@ -252,7 +284,7 @@
 ## 12. 다음 구체화 TODO
 
 1. room 라우팅 방식 확정
-- `consistent-hash` vs `redis directory` 중 선택
+- `consistent-hash` vs `redis routing hint` 중 선택
 
 2. Engine 상태 모델 정의
 - `RoomState`, `GameState`, `TurnState`, `ScoreState` 구조체/클래스 명세
@@ -267,8 +299,11 @@
 - 동시 접속자, room 수, room당 이벤트량 기준치
 
 6. Lobby -> GE 배정 지표 명세
-- `status`, `activeRooms`, `heartbeatUpdatedAt` 기준으로 owner GE 선택
+- Redis presence의 `status`, `activeRooms`, `heartbeatUpdatedAt` 기준으로 owner GE 선택
 - 필요 시 `loadScore` 같은 단일 부하지표로 확장
+
+7. scale-in migration API/상태 전이 명세
+- `DRAINING`, `MIGRATING`, handoff 성공/실패, owner pointer 갱신 시점 확정
 
 ---
 
@@ -287,7 +322,7 @@
 3. 라우팅 원칙
 - 라우팅 키는 `roomId`를 사용한다.
 - 동일 `roomId` 이벤트는 항상 동일 owner `GE`로 전달한다(affinity).
-- owner 조회는 Directory(예: Redis `roomId -> engineId`)를 사용한다.
+- owner 조회는 Redis routing hint(`roomId -> engineId`)를 사용한다.
 - stale 라우팅 시 `NOT_OWNER -> 재조회 -> 1회 재전송`으로 복구한다.
 
 4. WS가 유지할 최소 컨텍스트
@@ -297,8 +332,8 @@
 - `roomId -> owner GE`
 
 5. Lobby와 GE 역할 분리
-- Lobby가 담당: 방 생성, 랜덤 매칭 큐 처리, owner GE 배정, directory 등록
-- GE가 담당: 배정된 room의 턴/점수/캔버스/타이머/스냅샷 처리
+- Lobby가 담당: roomId 발급, random quick-join 중개, owner GE 배정, GE 요청 전달
+- GE가 담당: room 생성/보유/삭제, route/joinable 생성·삭제, 배정된 room의 턴/점수/캔버스/타이머/스냅샷 처리, 0명 room 정리
 - Lobby는 GE의 상세 room runtime 상태를 추적하지 않는다.
 - room lifecycle owner는 GE다.
 - client는 방 생성/매칭을 위해 Lobby의 HTTP API를 직접 호출한다.
@@ -307,8 +342,9 @@
 6. 오토스케일 운영 원칙
 - WS는 연결 수/네트워크 지표 중심으로 스케일한다.
 - GE는 `active_rooms`/이벤트량/CPU 중심으로 스케일한다.
-- scale-in은 drain 우선으로 처리한다(신규 room 배정 중단 후 종료).
-- GE drain 시간은 `30분`을 기본으로 잡는다.
+- GE scale-in은 `RUNNING` game은 유지하고, game 종료 후 `LOBBY` 상태 room을 재배정하는 migration 전략을 사용한다.
+- 단순 drain-only는 `private` room의 장수 특성상 보조 수단으로만 사용하고, 주 전략으로 채택하지 않는다.
+- 따라서 `DRAINING`의 의미는 "일정 시간 대기 후 종료"가 아니라 "신규 room 차단 후 migration을 수행하는 상태"로 본다.
 
 7. 재연결 정책
 - 재연결 유지 기능은 후속 단계로 미룬다.
@@ -330,24 +366,34 @@
 - drain 중인 WS는 신규 delivery 대상에서 제외되어야 한다.
 - 현재 시스템은 `at-most-once` 전달 모델이므로, drain 중 일부 미전달 이벤트는 허용한다.
 - 이벤트 전달 완전성보다 authoritative state 기반 복구 가능성을 우선한다.
+- WS는 GE scale-in migration 중 발생하는 owner 변경을 정상 시나리오로 취급해야 한다.
+- WS는 `roomId -> ownerEngineId` 캐시에 TTL이 남아 있어도 `NOT_OWNER`를 받으면 즉시 캐시를 무효화하고 Redis authoritative routing hint를 재조회해야 한다.
+- `NOT_OWNER` 이후에는 새 owner로 1회 재전송하는 흐름을 기본으로 한다.
+- `MIGRATING` 응답은 owner 변경 전 handoff 진행 중 상태를 의미하며, WS는 짧은 backoff 후 재조회/재시도를 수행하거나 클라이언트의 snapshot 재동기화를 유도한다.
 
 11. Lobby의 GE 선택 원칙
 - Lobby는 GE 내부 방 상태를 상세 조회하지 않는다.
-- 각 GE는 주기적으로 자신의 최소 상태를 heartbeat로 게시한다.
+- 각 GE는 주기적으로 자신의 최소 상태를 Redis presence로 직접 게시한다.
   - `engineId`
   - `status` (`ACTIVE`, `DRAINING`)
   - `activeRooms`
   - `heartbeatUpdatedAt`
 - Lobby는 owner GE 배정 시 아래 순서로 후보를 고른다.
   1. `ACTIVE` 상태인 GE만 후보로 선택
-  2. heartbeat가 오래된 GE 제외
+  2. presence가 오래된 GE 제외
   3. `activeRooms`가 가장 적은 GE 우선 선택
 - 필요 시 `activeRooms` 대신 단일 `loadScore` 지표로 확장할 수 있다.
-- 방 생성 후 runtime 상태 관리 책임은 GE로 넘어가며, Lobby는 directory만 유지한다.
+- 방 생성/삭제 및 runtime 상태 관리, route/joinable lifecycle 책임은 GE가 가진다. Lobby는 배정만 담당한다.
+- scale-in migration 시에도 target 선택 기준은 동일하게 적용한다.
+- Lobby는 migration coordinator 역할을 수행할 수 있으나, room runtime snapshot의 semantic owner는 아니다.
+- Lobby는 target 선택과 owner pointer 갱신을 담당하고, room snapshot 생성/복원은 source/target GE가 담당한다.
 
 12. GE 내부 room lifecycle 관리
 - `room actor 1개 = room 1개` 기준으로 관리한다.
-- room 생성 시 owner GE가 room state를 생성한다.
-- private room 생성 직후 아직 입장자가 없는 상태도 GE가 소유한다.
-- pending/empty/ended room은 GE 내부 정책에 따라 자동 정리할 수 있다.
+- owner GE가 room 생성과 삭제를 책임진다.
+- 0명/empty/ended room은 GE 내부 정책에 따라 자동 정리할 수 있다.
 - idle room 자동 정리를 위해 Caffeine eviction을 사용할 수 있으나, 제거 기준은 room 상태를 고려한 정책으로 제어한다.
+- room 상태는 최소 `LOBBY`, `RUNNING`, `MIGRATING`, `CLOSED`를 갖는 방향이 적절하다.
+- `MIGRATING` 상태 room은 새 게임 시작을 막고 handoff 완료/실패에 따라 `LOBBY` 또는 제거로 전이한다.
+- 마지막 participant가 떠난 뒤 room 제거 여부는 GE 정책으로 정한다.
+- `private` room은 0명 상태에서 idle TTL을 두고 제거할 수 있고, `random` room은 0명 즉시 제거해도 된다.

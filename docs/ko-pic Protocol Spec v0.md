@@ -10,7 +10,7 @@
 
 범위:
 
-- private 방 생성, random 매칭 요청은 `Lobby`의 HTTP API가 담당한다.
+- private 방 생성, random quick-join 요청은 `Lobby`의 HTTP API가 담당한다.
 - 이 문서는 방 생성 이후, 참여한 클라이언트와 WS 사이의 runtime 프로토콜만 다룬다.
 - 클라이언트는 WS 연결 시 `roomId`를 함께 전달한다.
 - WS는 `afterConnectionEstablished` 단계에서 내부 join 처리를 GE에 전달하며, 연결 성립 이후 room 참여를 완료한다.
@@ -112,7 +112,7 @@
 
 ### 101 RESERVED
 
-- private 방 생성과 random 매칭 요청은 WS가 아니라 `Lobby`의 HTTP API가 처리한다.
+- private 방 생성과 random quick-join 요청은 WS가 아니라 `Lobby`의 HTTP API가 처리한다.
 - 이벤트 코드 `101`은 WS runtime 프로토콜에서 사용하지 않는다.
 
 ### 102 RESERVED
@@ -546,10 +546,11 @@ drawer 전용.
 ## 8. 처리 흐름 요약
 
 1. Client -> Lobby HTTP (방 생성/매칭 등 pre-entry flow, 본 문서 범위 밖)
-2. Lobby가 room 생성 및 owner GE 배정
+2. Lobby가 roomId 발급 및 owner GE 배정
 3. Client -> WS 연결 시 `roomId` 전달
 4. WS가 `afterConnectionEstablished` 단계에서 내부 join을 GE에 전달
-5. 참여 완료 후 `301 + 408`은 GE -> WS outbound 경로로 전달
-6. 이후 모든 runtime 요청은 세션의 `roomId` 기준으로 GE에 라우팅
-7. Server -> Client 상태/화면 이벤트 송신
-8. 불일치 시 `106` 요청으로 `408` 재동기화
+5. owner GE가 join을 수락하고 room 참여를 처리
+6. 참여 완료 후 `301 + 408`은 GE -> WS outbound 경로로 전달
+7. 이후 모든 runtime 요청은 세션의 `roomId` 기준으로 GE에 라우팅
+8. Server -> Client 상태/화면 이벤트 송신
+9. 불일치 시 `106` 요청으로 `408` 재동기화

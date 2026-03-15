@@ -46,6 +46,26 @@ public class CaffeineRoomDirectory implements RoomDirectory {
 	}
 
 	@Override
+	public void invalidateOwnerCache(String roomId) {
+		if (roomId == null || roomId.isBlank()) {
+			return;
+		}
+
+		log.info("room directory invalidate owner cache roomId={}", roomId);
+		roomOwners.invalidate(roomId);
+	}
+
+	@Override
+	public void invalidateRouteCache(String engineId) {
+		if (engineId == null || engineId.isBlank()) {
+			return;
+		}
+
+		log.info("room directory invalidate route cache engineId={}", engineId);
+		engineRoutes.invalidate(engineId);
+	}
+
+	@Override
 	public void putOwner(String roomId, String engineId) {
 		if (roomId == null || roomId.isBlank() || engineId == null || engineId.isBlank()) {
 			return;

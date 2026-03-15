@@ -1,6 +1,7 @@
 package io.jhpark.kopic.ws.engine.infra.rpc;
 
 import io.jhpark.kopic.ws.engine.app.EngineAck;
+import io.jhpark.kopic.ws.engine.app.EngineAckReason;
 import io.jhpark.kopic.ws.engine.app.EngineEnvelopeRequest;
 import io.jhpark.kopic.ws.engine.app.GameEngineClient;
 import io.jhpark.kopic.ws.engine.app.SessionLifecycleEvent;
@@ -23,14 +24,16 @@ public class DummyGameEngineClient implements GameEngineClient {
 	@Override
 	public EngineAck send(EngineEnvelopeRequest request) {
 		boolean accepted = roomDirectory.findOwner(request.roomId()).isPresent();
-		log.info("engine dummy envelope roomId={} userId={} eventCode={} requestId={} accepted={}", request.roomId(), request.userId(), request.envelope().eventCode(), request.envelope().requestId(), accepted);
-		return new EngineAck(accepted);
+		EngineAck ack = accepted ? EngineAck.acceptedAck() : EngineAck.rejectedAck(EngineAckReason.NOT_OWNER);
+		log.info("engine dummy envelope roomId={} userId={} eventCode={} requestId={} accepted={} reason={}", request.roomId(), request.userId(), request.envelope().eventCode(), request.envelope().requestId(), ack.accepted(), ack.reason());
+		return ack;
 	}
 
 	@Override
 	public EngineAck send(SessionLifecycleEvent event) {
 		boolean accepted = roomDirectory.findOwner(event.roomId()).isPresent();
-		log.info("engine dummy lifecycle roomId={} userId={} type={} accepted={}", event.roomId(), event.userId(), event.type(), accepted);
-		return new EngineAck(accepted);
+		EngineAck ack = accepted ? EngineAck.acceptedAck() : EngineAck.rejectedAck(EngineAckReason.NOT_OWNER);
+		log.info("engine dummy lifecycle roomId={} userId={} type={} accepted={} reason={}", event.roomId(), event.userId(), event.type(), ack.accepted(), ack.reason());
+		return ack;
 	}
 }

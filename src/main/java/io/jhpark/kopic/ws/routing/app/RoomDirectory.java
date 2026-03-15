@@ -7,6 +7,10 @@ public interface RoomDirectory {
 
 	Optional<EngineRoute> findOwner(String roomId);
 
+	void invalidateOwnerCache(String roomId);
+
+	void invalidateRouteCache(String engineId);
+
 	void putOwner(String roomId, String engineId);
 
 	void putRoute(String engineId, EngineRoute engineRoute);

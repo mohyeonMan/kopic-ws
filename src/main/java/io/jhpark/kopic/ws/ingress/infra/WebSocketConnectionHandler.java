@@ -3,6 +3,7 @@ package io.jhpark.kopic.ws.ingress.infra;
 import io.jhpark.kopic.ws.config.WebSocketProperties;
 import io.jhpark.kopic.ws.dispatch.app.CommandDispatchService;
 import io.jhpark.kopic.ws.dispatch.app.EngineRequestRejectedException;
+import io.jhpark.kopic.ws.engine.app.EngineAckReason;
 import io.jhpark.kopic.ws.ingress.app.EnvelopeValidator;
 import io.jhpark.kopic.ws.ingress.app.InvalidEnvelopeException;
 import io.jhpark.kopic.ws.egress.dto.ServerEnvelope;
@@ -59,7 +60,7 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 			commandDispatchService.handleConnected(wsSession);
 			log.info("ws internal join requested sessionId={} userId={} roomId={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId());
 		} catch (EngineRequestRejectedException exception) {
-			log.warn("ws internal join rejected sessionId={} userId={} roomId={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId());
+			log.warn("ws internal join rejected sessionId={} userId={} roomId={} reason={}", session.getId(), wsSession.getUserId(), wsSession.getRoomId(), exception.getReason());
 			sessionRegistry.remove(session.getId());
 			closeQuietly(session, CloseStatus.SERVER_ERROR);
 		}
@@ -67,18 +68,8 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 
 	@Override
 	protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-		sessionRegistry.touch(session.getId(), Instant.now()).ifPresent(touchedSession -> {
-			try {
-				log.info("ws inbound sessionId={} userId={} roomId={} payloadSize={}", session.getId(), touchedSession.getUserId(), touchedSession.getRoomId(), message.getPayloadLength());
-				commandDispatchService.handleMessage(touchedSession, envelopeValidator.validate(message.getPayload()));
-			} catch (InvalidEnvelopeException exception) {
-				log.warn("ws invalid envelope sessionId={} error={}", session.getId(), exception.getMessage());
-				sendError(session, 901, "INVALID_PAYLOAD", null);
-			} catch (EngineRequestRejectedException exception) {
-				log.warn("ws engine rejected sessionId={} error={}", session.getId(), exception.getMessage());
-				sendError(session, 909, "INTERNAL_ERROR", null);
-			}
-		});
+		sessionRegistry.touch(session.getId(), Instant.now())
+			.ifPresent(touchedSession -> processTextMessage(session, touchedSession, message));
 	}
 
 	@Override
@@ -94,6 +85,37 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 			return text;
 		}
 		throw new IllegalStateException("missing required handshake attribute: " + attributeName);
+	}
+
+	private void processTextMessage(WebSocketSession webSocketSession, WsSession session, TextMessage message) {
+		try {
+			log.info(
+				"ws inbound sessionId={} userId={} roomId={} payloadSize={}",
+				webSocketSession.getId(),
+				session.getUserId(),
+				session.getRoomId(),
+				message.getPayloadLength()
+			);
+			commandDispatchService.handleMessage(session, envelopeValidator.validate(message.getPayload()));
+		} catch (InvalidEnvelopeException exception) {
+			handleInvalidEnvelope(webSocketSession, exception);
+		} catch (EngineRequestRejectedException exception) {
+			handleEngineRejected(webSocketSession, exception);
+		}
+	}
+
+	private void handleInvalidEnvelope(WebSocketSession session, InvalidEnvelopeException exception) {
+		log.warn("ws invalid envelope sessionId={} error={}", session.getId(), exception.getMessage());
+		sendError(session, 901, "INVALID_PAYLOAD", null);
+	}
+
+	private void handleEngineRejected(WebSocketSession session, EngineRequestRejectedException exception) {
+		log.warn("ws engine rejected sessionId={} reason={} error={}", session.getId(), exception.getReason(), exception.getMessage());
+		switch (exception.getReason()) {
+			case NOT_OWNER -> sendError(session, 902, "ROOM_NOT_FOUND", null);
+			case MIGRATING -> sendError(session, 909, "MIGRATING", null);
+			default -> sendError(session, 909, "INTERNAL_ERROR", null);
+		}
 	}
 
 	private void sendError(WebSocketSession session, int code, String message, String requestId) {

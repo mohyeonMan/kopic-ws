@@ -25,7 +25,8 @@
 random 규칙:
 
 - host 개념 없음.
-- 매칭 큐 인원 `2명 이상`이면 즉시 방 생성 후 게임 시작(대기실 없음).
+- random quick-join 요청 시, join 가능한 existing random room이 있으면 그 방에 즉시 편입한다.
+- join 가능한 random room이 없으면 owner GE가 새 random room을 생성하고 요청한 사용자를 첫 participant로 넣는다.
 - 게임 중 유입 허용.
 
 private 규칙:
@@ -90,7 +91,7 @@ private 규칙:
 시작:
 
 - private: host 시작 요청 시 시작
-- random: 매칭 성립 즉시 시작
+- random: room이 만들어진 뒤 GE 정책에 따라 자동 시작할 수 있다.
 
 턴 순서:
 
@@ -209,6 +210,9 @@ MVP 정책:
 
 - 연결 끊김 시 즉시 leave 처리(유예시간 없음)
 - 재접속 복구 정책(동일 사용자 식별/유예 재진입)은 후속 버전에서 정의
+- 마지막 participant가 떠난 뒤 room 정리는 owner GE가 담당한다.
+- `private` room은 empty 상태가 되더라도 즉시 제거하지 않고 idle TTL 이후 정리할 수 있다.
+- `random` room은 empty 상태가 되면 즉시 제거하거나 매우 짧은 TTL 후 정리할 수 있다.
 
 ---
 
@@ -219,4 +223,3 @@ MVP는 `at-most-once` 전달 모델을 사용한다.
 - WS 레벨 재전송 없음
 - 순서/중복 제어는 GE에서 room 단위 라우팅과 TTL 기반 중복 처리로 보완
 - 상태 불일치 시 클라이언트는 `GAME_SNAPSHOT_REQUEST`로 복구
-
