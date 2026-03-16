@@ -167,11 +167,12 @@
 - `RUNNING` 상태 room은 source GE가 현재 게임을 끝까지 책임진다.
 - game runtime이 끝나 room이 다시 `LOBBY` 상태가 되면, source GE는 그 room을 migration 후보로 올린다.
 - migration은 `LOBBY` 상태 room만 대상으로 한다.
-- migration 중 room은 `MIGRATING` 상태로 잠그고, 새 `GAME_START_REQUEST`는 받지 않는다.
-- `Lobby`는 migration coordinator로서 target GE를 선택하고 handoff 절차를 조정한다.
-- 실제 room snapshot 생성과 import는 `GE`가 담당한다.
-- `roomId -> ownerEngineId` owner pointer 갱신은 target GE import 성공 이후에만 수행한다.
-- import 성공 전까지 source GE가 authoritative owner를 유지한다.
+- migration 시작 시 source GE는 room을 `MIGRATING` 상태로 잠그고, 새 `GAME_START_REQUEST`를 받지 않는다.
+- `MIGRATING` 전환 시 source GE는 `random` room을 `rooms:random:joinable`에서 제외해야 한다.
+- `Lobby`는 migration coordinator로서 target GE를 선택하고 source GE에 target endpoint를 반환한다.
+- 실제 room snapshot 생성/전송(import)은 source/target GE가 직접 수행한다.
+- `roomId -> ownerEngineId` owner pointer 갱신은 source GE가 target prepare 성공 이후 Redis에서 CAS로 수행한다.
+- owner pointer 갱신 전까지 source GE가 authoritative owner를 유지한다.
 - handoff 완료 후 source GE는 기존 room actor/state를 제거한다.
 - 이 전략은 진행 중 게임 정합성을 깨지 않으면서, game 종료 시점에 waiting room을 다른 GE로 재배치하기 위한 절충안이다.
 
@@ -386,7 +387,7 @@
 - 방 생성/삭제 및 runtime 상태 관리, route/joinable lifecycle 책임은 GE가 가진다. Lobby는 배정만 담당한다.
 - scale-in migration 시에도 target 선택 기준은 동일하게 적용한다.
 - Lobby는 migration coordinator 역할을 수행할 수 있으나, room runtime snapshot의 semantic owner는 아니다.
-- Lobby는 target 선택과 owner pointer 갱신을 담당하고, room snapshot 생성/복원은 source/target GE가 담당한다.
+- Lobby는 target 선택과 endpoint 전달만 담당하고, room snapshot 생성/복원 및 owner pointer 갱신은 source/target GE가 담당한다.
 
 12. GE 내부 room lifecycle 관리
 - `room actor 1개 = room 1개` 기준으로 관리한다.

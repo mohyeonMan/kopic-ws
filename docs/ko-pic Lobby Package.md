@@ -99,29 +99,21 @@ io.jhpark.kopic.lobby
       EnginePrivateRoomPort
       EngineRandomRoomPort
       EngineQuickJoinPort
-      EngineMigrationPort
     infra
       RedisEnginePresenceStore
       HttpEnginePrivateRoomClient
       HttpEngineRandomRoomClient
       HttpEngineQuickJoinClient
-      HttpEngineMigrationClient
 
   migration
     domain
       MigrationRequest
       MigrationPlan
-      MigrationResult
-      MigrationFailureReason
     app
       RoomMigrationCoordinator
-      RoomMigrationEligibilityChecker
-      RoomMigrationFinalizeService
     dto
       ReassignRoomRequest
       ReassignRoomResponse
-    infra
-      RedisMigrationStateStore
 
   api
     publicapi
@@ -195,7 +187,7 @@ io.jhpark.kopic.lobby
 - `Lobby`가 읽는 routing hint 접근을 담당한다.
 - 필요 시 `roomCode -> roomId` 인덱스 조회도 함께 다룬다.
 - WS나 다른 서비스가 참조하는 owner 정보의 기준점은 Redis routing hint다.
-- `Lobby`는 owner selection을 위해 routing hint를 참조하고, migration 시 owner pointer 갱신만 조정한다.
+- `Lobby`는 owner selection을 위해 routing hint를 참조하고, migration 시 source owner 검증만 수행한다.
 
 중요한 점은 아래다.
 
@@ -215,19 +207,11 @@ io.jhpark.kopic.lobby
   - `activeRooms`
   - `heartbeatUpdatedAt`
 
-추가로 migration을 조정하려면 engine에 대한 outbound port가 필요하다.
-
-예:
-
-- target GE에 room import 요청
-- source/target GE migration 결과 확인
-
 추가로 `Lobby -> GE` 요청 경계도 이 패키지에 둔다.
 
 - private room 생성 요청
 - random room 생성 요청
 - random quick-join 승인 요청
-- migration import 요청
 
 즉 `engine` 패키지는 presence read와 GE command port를 함께 가지는 외부 GE 경계 패키지로 두는 편이 맞다.
 
@@ -237,10 +221,8 @@ io.jhpark.kopic.lobby
 - `Lobby`는 migration coordinator가 될 수 있지만, room snapshot의 생성/복원 자체를 소유하지는 않는다.
 - 따라서 `migration` 패키지의 주 역할은 아래와 같다.
   - source GE의 재배정 요청 접수
-  - 대상 room이 migration 가능한지 판단
   - target GE 선택
-  - target import 성공 확인
-  - 그 후 owner pointer 갱신
+  - source GE에 target endpoint 전달
 
 현재 전략에서 migration 가능 조건:
 
@@ -253,7 +235,7 @@ io.jhpark.kopic.lobby
 - handoff 중인 room
 - 이미 `MIGRATING` 상태
 
-이 패키지가 중요한 이유는 `Lobby`가 scale-in에서 단순 조회 서버가 아니라 orchestration 책임까지 가지기 때문이다.
+이 패키지가 중요한 이유는 `Lobby`가 scale-in에서 target 선정/중개를 일관되게 수행하기 때문이다.
 
 ### 7. `api`
 
@@ -268,7 +250,6 @@ public API 예시:
 internal API 예시:
 
 - GE -> Lobby room reassign 요청
-- 운영용 migration 상태 조회
 
 이 둘을 같은 controller에 섞기 시작하면 인증/권한/모델이 빠르게 오염된다.
 
@@ -299,7 +280,7 @@ internal API 예시:
 
 `Lobby`가 소유:
 
-- migration 진행 메타 상태
+- 없음(현재 설계 기준으로 migration runtime 상태는 source/target GE가 관리)
 
 `Lobby`가 참조만 함:
 
@@ -341,10 +322,6 @@ public interface RandomRoomIndex {
 
 public interface EngineQuickJoinPort {
     QuickJoinResult tryJoinRandomRoom(String engineId, String roomId, JoinUserCommand command);
-}
-
-public interface EngineMigrationPort {
-    MigrationResult importWaitingRoom(String targetEngineId, RoomMigrationPayload payload);
 }
 ```
 
@@ -391,17 +368,18 @@ public interface EngineMigrationPort {
 
 1. source GE가 drain 중 waiting room handoff 필요를 감지한다.
 2. source GE -> `Lobby` internal API로 재배정 요청
-3. `migration`이 대상 room 상태와 migration 가능 여부를 확인한다.
+3. source GE는 대상 room을 로컬 `MIGRATING`으로 잠그고, `random` room이면 joinable index에서 제외한다.
 4. `allocation`이 target GE를 선택한다.
-5. `engine` outbound port가 target GE import를 호출한다.
-6. import 성공 이후에만 owner pointer를 target으로 갱신한다.
-7. 성공 결과를 source GE에 반환한다.
+5. `Lobby`는 source GE에 `targetEngineId + targetEngineEndpoint`를 반환한다.
+6. source GE가 target GE에 snapshot을 직접 전달해 prepare를 완료한다.
+7. source GE가 Redis owner pointer를 CAS로 `source -> target` 갱신한다.
+8. owner 갱신 성공 후 source GE가 기존 room actor/state를 제거한다.
 
 중요:
 
 - `Lobby`는 migration coordinator지만 runtime state owner는 아니다.
-- owner 갱신은 import 성공 이후에만 수행해야 한다.
-- failure 시 source owner를 유지한 채 롤백해야 한다.
+- `Lobby`는 source/target 데이터 전달이나 owner 갱신을 수행하지 않는다.
+- failure 시 source owner를 유지한 채 source/target GE가 복구한다.
 
 ### 5. Random quick-join에서 Redis와 GE의 역할 분리
 
@@ -426,8 +404,7 @@ public interface EngineMigrationPort {
 - 어떤 room이 재배정 대상인가
 - source GE가 누구인가
 - target GE가 누구인가
-- import가 성공했는가
-- owner pointer를 지금 바꿔도 되는가
+- target endpoint가 무엇인가
 
 `Lobby`가 몰라도 되는 것:
 
@@ -445,7 +422,6 @@ public interface EngineMigrationPort {
 - `room:code:{roomCode}`
 - `room:{roomId}:owner`
 - `rooms:random:joinable`
-- `migration:room:{roomId}`
 
 여기서 중요한 구분:
 
@@ -454,6 +430,7 @@ public interface EngineMigrationPort {
 - `room:code:{roomCode}`는 GE가 생성/삭제하고 Lobby가 조회하는 초대 코드 인덱스다.
 - random room joinable index 역시 실제 join/leave 결과를 알고 있는 GE가 갱신 주체가 되는 편이 맞다.
 - `room:{roomId}:owner` route 역시 room 생성/삭제와 함께 GE가 생성/삭제 주체가 되는 편이 맞다.
+- migration 중 joinable 제거/복구와 owner pointer CAS 갱신도 source/target GE가 수행하는 편이 맞다.
 
 즉 `Lobby`는 entry와 배정 정보를 다루고, GE는 실제 room registry와 routing을 든다.
 
@@ -510,7 +487,7 @@ io.jhpark.kopic.lobby
 ### Phase 3
 
 - waiting room reassignment 완성
-- migration 상태/실패 보정
+- source/target GE handoff 실패 복구 보강
 - 운영 지표/관리 API 보강
 
 ## 최종 기준

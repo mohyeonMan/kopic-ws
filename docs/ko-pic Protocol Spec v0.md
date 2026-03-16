@@ -174,11 +174,7 @@
   "rid": "c-6",
   "p": {
     "turnId": "t-1",
-    "strokeId": "s-1",
-    "tool": 1,
-    "colorIndex": 3,
-    "size": 4,
-    "points": [[0.12001, 0.25000], [0.13000, 0.27000]]
+    "stroke": ["s-1", 1, 3, 4, [[0.12001, 0.25000], [0.13000, 0.27000]]]
   }
 }
 ```
@@ -186,6 +182,7 @@
 필드 규칙:
 
 - `turnId`: 현재 턴 식별자
+- `stroke`: `[strokeId, tool, colorIndex, size, points]`
 - `tool`: `1=PEN`, `2=ERASER`
 - `colorIndex`: 0..19
 - `size`: 1..20
@@ -196,6 +193,10 @@
 
 - 사용자당 `DRAW_STROKE` 초당 최대 20회
 - 메시지 최대 8KB
+
+호환:
+
+- 서버는 전환 기간 동안 legacy object 포맷(`strokeId/tool/colorIndex/size/points`)도 수용 가능.
 
 권한:
 
@@ -380,11 +381,7 @@
   "p": {
     "turnId": "t-1",
     "drawerUserId": "u1",
-    "strokeId": "s-1",
-    "tool": 1,
-    "colorIndex": 3,
-    "size": 4,
-    "points": [[0.12001, 0.25000], [0.13000, 0.27000]]
+    "stroke": ["s-1", 1, 3, 4, [[0.12001, 0.25000], [0.13000, 0.27000]]]
   }
 }
 ```
@@ -492,13 +489,7 @@ drawer 전용.
     },
     "canvas": {
       "strokes": [
-        {
-          "strokeId": "s-1",
-          "tool": 1,
-          "colorIndex": 3,
-          "size": 4,
-          "points": [[0.12001, 0.25000], [0.13000, 0.27000]]
-        }
+        ["s-1", 1, 3, 4, [[0.12001, 0.25000], [0.13000, 0.27000]]]
       ]
     },
     "scores": [

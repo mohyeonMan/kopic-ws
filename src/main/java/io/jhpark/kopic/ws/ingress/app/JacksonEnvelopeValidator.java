@@ -18,22 +18,22 @@ public class JacksonEnvelopeValidator implements EnvelopeValidator {
 	public ClientEnvelope validate(String payload) {
 		try {
 			JsonNode root = objectMapper.readTree(payload);
-			JsonNode eventCode = root.get("e");
-			JsonNode messagePayload = root.get("p");
-			JsonNode requestId = root.get("rid");
+			JsonNode e = root.get("e");
+			JsonNode p = root.get("p");
+			JsonNode rid = root.get("rid");
 
-			if (eventCode == null || !eventCode.isInt()) {
+			if (e == null || !e.isInt()) {
 				throw new InvalidEnvelopeException("missing or invalid e");
 			}
 
-			if (messagePayload == null || !messagePayload.isObject()) {
+			if (p == null || !p.isObject()) {
 				throw new InvalidEnvelopeException("missing or invalid p");
 			}
 
 			return new ClientEnvelope(
-				eventCode.asInt(),
-				messagePayload,
-				requestId != null && requestId.isTextual() ? requestId.asText() : null
+				e.asInt(),
+				p,
+				rid != null && rid.isTextual() ? rid.asText() : null
 			);
 		} catch (InvalidEnvelopeException exception) {
 			throw exception;

@@ -19,7 +19,7 @@ public class RabbitEngineEventSubscriber implements EngineEventSubscriber {
 
 	@Override
 	public void handle(InboundEngineEvent event) {
-		log.info("rabbit inbound userId={} eventCode={} requestId={}", event.userId(), event.envelope().eventCode(), event.envelope().requestId());
+		log.info("rabbit inbound userId={} e={} rid={}", event.userId(), event.envelope().e(), event.envelope().rid());
 		sessionDeliveryPort.deliver(event.userId(), event.envelope());
 	}
 

@@ -118,15 +118,15 @@ public class WebSocketConnectionHandler extends TextWebSocketHandler {
 		}
 	}
 
-	private void sendError(WebSocketSession session, int code, String message, String requestId) {
+	private void sendError(WebSocketSession session, int code, String message, String rid) {
 		try {
-			log.info("ws outbound error sessionId={} code={} message={} requestId={}", session.getId(), code, message, requestId);
-			ObjectNode payload = objectMapper.createObjectNode();
-			payload.put("code", code);
-			payload.put("message", message);
-			payload.putNull("requestEvent");
-			payload.set("details", objectMapper.createObjectNode());
-			ServerEnvelope envelope = new ServerEnvelope(3, payload, requestId);
+			log.info("ws outbound error sessionId={} code={} message={} rid={}", session.getId(), code, message, rid);
+			ObjectNode p = objectMapper.createObjectNode();
+			p.put("code", code);
+			p.put("message", message);
+			p.putNull("requestEvent");
+			p.set("details", objectMapper.createObjectNode());
+			ServerEnvelope envelope = new ServerEnvelope(3, p, rid);
 			session.sendMessage(new TextMessage(objectMapper.writeValueAsString(envelope)));
 		} catch (Exception exception) {
 			log.warn("ws error send failed sessionId={} code={} cause={}", session.getId(), code, exception.getMessage());

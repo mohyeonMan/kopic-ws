@@ -81,7 +81,6 @@ MVP에서는 아래 정도의 전제만 둔다.
 - `JOIN_NOT_ALLOWED`
 - `JOIN_ALREADY_MEMBER`
 - `ROOM_REASSIGNMENT_NOT_ALLOWED`
-- `ROOM_REASSIGNMENT_FAILED`
 - `INTERNAL_ERROR`
 
 ---
@@ -293,35 +292,20 @@ response `200 OK`:
 
 - source GE가 waiting room 재배정을 요청한다.
 - 대상 room은 `LOBBY` 또는 waiting 상태여야 한다.
-- `Lobby`는 target GE를 선택하고, import 성공 후 owner를 갱신한다.
+- `Lobby`는 target GE를 선택하고, source가 target을 직접 호출할 수 있도록 target endpoint를 반환한다.
+- `Lobby`는 room snapshot import나 owner pointer 갱신을 수행하지 않는다.
 
 request:
 
 ```json
 {
-  "sourceEngineId": "ge-1",
-  "roomStatus": "LOBBY",
-  "reason": "SCALE_IN",
-  "settings": {
-    "roundCount": 3,
-    "drawSec": 20,
-    "wordChoiceCount": 3,
-    "endMode": "FIRST_CORRECT"
-  },
-  "requestedAt": "2026-03-15T10:20:30Z"
+  "sourceEngineId": "ge-1"
 }
 ```
 
 필드:
 
 - `sourceEngineId`: string, required
-- `roomStatus`: string, required
-- `reason`: string, required
-- `settings.roundCount`: int, required
-- `settings.drawSec`: int, required
-- `settings.wordChoiceCount`: int, required
-- `settings.endMode`: string, required
-- `requestedAt`: datetime string, optional
 
 response `200 OK`:
 
@@ -330,6 +314,7 @@ response `200 OK`:
   "roomId": "r-123",
   "sourceEngineId": "ge-1",
   "targetEngineId": "ge-3",
+  "targetEngineEndpoint": "http://ge-3.ge.svc.cluster.local:8080",
   "reassigned": true
 }
 ```
@@ -339,47 +324,14 @@ response `200 OK`:
 - `400 INVALID_REQUEST`
 - `409 ROOM_REASSIGNMENT_NOT_ALLOWED`
 - `503 NO_AVAILABLE_ENGINE`
-- `500 ROOM_REASSIGNMENT_FAILED`
 
 규칙:
 
-1. `Lobby`는 source room이 migration 가능한 상태인지 확인한다.
+1. `Lobby`는 source room owner가 요청의 `sourceEngineId`와 일치하는지만 확인한다.
 2. target GE는 일반 room 배정과 같은 selection policy로 고른다.
-3. target import 성공 전에는 owner를 바꾸지 않는다.
-4. 실패 시 source owner를 그대로 유지한다.
-
----
-
-## 6.2 Migration 상태 조회
-
-### `GET /internal/lobby/migrations/rooms/{roomId}`
-
-설명:
-
-- 특정 room의 migration 진행 상태를 운영/디버깅용으로 조회한다.
-
-response `200 OK`:
-
-```json
-{
-  "roomId": "r-123",
-  "state": "COMPLETED",
-  "sourceEngineId": "ge-1",
-  "targetEngineId": "ge-3",
-  "updatedAt": "2026-03-15T10:20:45Z"
-}
-```
-
-`state` 예시:
-
-- `REQUESTED`
-- `IMPORTING`
-- `COMPLETED`
-- `FAILED`
-
-에러:
-
-- `404 ROOM_NOT_FOUND`
+3. source GE는 반환된 endpoint로 target GE에 room snapshot을 직접 전송한다.
+4. owner pointer 갱신은 source GE가 target prepare 성공 이후에 Redis에서 CAS로 수행한다.
+5. migration 중 `random` room은 `rooms:random:joinable`에서 제외되어야 한다.
 
 ---
 
@@ -419,7 +371,7 @@ random quick-join의 핵심은 아래다.
 - room 검색/필터 API
 - random quick-join candidate selection tuning
 - 운영용 engine 상태 조회 API
-- internal migration retry/cancel API
+- internal migration retry/cancel API (필요 시 source/GE 측으로 위임)
 
 ---
 
@@ -430,4 +382,4 @@ random quick-join의 핵심은 아래다.
 이 문서 기준으로:
 
 - public API는 client entry flow를 담당하고
-- internal API는 GE scale-in orchestration을 담당한다.
+- internal API는 GE scale-in orchestration에서 target 할당/중개를 담당한다.

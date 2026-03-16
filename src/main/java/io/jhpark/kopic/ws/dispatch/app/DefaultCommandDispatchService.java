@@ -58,12 +58,12 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleMessage(WsSession session, ClientEnvelope envelope) {
-		log.info("dispatch message userId={} roomId={} eventCode={} requestId={}", session.getUserId(), session.getRoomId(), envelope.eventCode(), envelope.requestId());
-		if (envelope.eventCode() == EVENT_PING) {
-			log.info("dispatch ping->pong userId={} roomId={} requestId={}", session.getUserId(), session.getRoomId(), envelope.requestId());
+		log.info("dispatch message userId={} roomId={} e={} rid={}", session.getUserId(), session.getRoomId(), envelope.e(), envelope.rid());
+		if (envelope.e() == EVENT_PING) {
+			log.info("dispatch ping->pong userId={} roomId={} rid={}", session.getUserId(), session.getRoomId(), envelope.rid());
 			sessionDeliveryPort.deliver(
 				session.getUserId(),
-				new ServerEnvelope(EVENT_PONG, objectMapper.createObjectNode(), envelope.requestId())
+				new ServerEnvelope(EVENT_PONG, objectMapper.createObjectNode(), envelope.rid())
 			);
 			return;
 		}

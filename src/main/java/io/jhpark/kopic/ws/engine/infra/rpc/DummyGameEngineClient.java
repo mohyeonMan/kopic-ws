@@ -25,7 +25,7 @@ public class DummyGameEngineClient implements GameEngineClient {
 	public EngineAck send(EngineEnvelopeRequest request) {
 		boolean accepted = roomDirectory.findOwner(request.roomId()).isPresent();
 		EngineAck ack = accepted ? EngineAck.acceptedAck() : EngineAck.rejectedAck(EngineAckReason.NOT_OWNER);
-		log.info("engine dummy envelope roomId={} userId={} eventCode={} requestId={} accepted={} reason={}", request.roomId(), request.userId(), request.envelope().eventCode(), request.envelope().requestId(), ack.accepted(), ack.reason());
+		log.info("engine dummy envelope roomId={} userId={} e={} rid={} accepted={} reason={}", request.roomId(), request.userId(), request.envelope().e(), request.envelope().rid(), ack.accepted(), ack.reason());
 		return ack;
 	}
 

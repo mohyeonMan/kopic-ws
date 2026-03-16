@@ -27,15 +27,15 @@ public class WebSocketMessageSender implements SessionDeliveryPort {
 	public void deliver(String userId, ServerEnvelope event) {
 		sessionRegistry.findCurrentByUserId(userId).ifPresent(session -> {
 			if (!session.getWebSocketSession().isOpen()) {
-				log.warn("ws outbound skipped closed session userId={} eventCode={} requestId={}", userId, event.eventCode(), event.requestId());
+				log.warn("ws outbound skipped closed session userId={} e={} rid={}", userId, event.e(), event.rid());
 				return;
 			}
 
 			try {
-				log.info("ws outbound userId={} sessionId={} eventCode={} requestId={}", userId, session.getWebSocketSession().getId(), event.eventCode(), event.requestId());
+				log.info("ws outbound userId={} sessionId={} e={} rid={}", userId, session.getWebSocketSession().getId(), event.e(), event.rid());
 				session.getWebSocketSession().sendMessage(new TextMessage(objectMapper.writeValueAsString(event)));
 			} catch (Exception exception) {
-				log.warn("ws outbound failed userId={} sessionId={} eventCode={} cause={}", userId, session.getWebSocketSession().getId(), event.eventCode(), exception.getMessage());
+				log.warn("ws outbound failed userId={} sessionId={} e={} cause={}", userId, session.getWebSocketSession().getId(), event.e(), exception.getMessage());
 				throw new IllegalStateException("failed to send websocket message", exception);
 			}
 		});
