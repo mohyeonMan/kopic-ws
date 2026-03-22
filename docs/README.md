@@ -1,4 +1,4 @@
-﻿# ko-pic Docs Index
+# ko-pic Docs Index
 
 이 디렉터리는 `kopic` 서버군의 MVP 설계 문서를 모아둔 인덱스다.
 

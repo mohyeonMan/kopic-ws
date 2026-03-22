@@ -1,4 +1,4 @@
-﻿# ko-pic GE Internal API Contract v0
+# ko-pic GE Internal API Contract v0
 
 ## 1. 목적
 
@@ -79,15 +79,15 @@ public record SessionLifecycleEvent(
 
 ```java
 public enum SessionLifecycleType {
-    CONNECTED,
-    DISCONNECTED
+    JOIN,
+    LEAVE
 }
 ```
 
 의미:
 
-- `CONNECTED`: WS `afterConnectionEstablished` 직후 내부 join 트리거
-- `DISCONNECTED`: WS 연결 종료 직후 즉시 leave 트리거
+- `JOIN`: WS `afterConnectionEstablished` 직후 내부 room join 트리거
+- `LEAVE`: WS 연결 종료 또는 명시적 세션 종료 직후 내부 room leave 트리거
 
 MVP 정책상 재접속 유예는 없고, disconnect는 즉시 leave로 처리한다.
 
@@ -219,8 +219,8 @@ v0에서는 DTO 필드 추가를 최소화한다.
 
 ## 8. 최소 테스트 시나리오
 
-1. CONNECTED ack accepted
-2. CONNECTED ack not_owner -> invalidate + 1회 재시도 성공
+1. JOIN ack accepted
+2. JOIN ack not_owner -> invalidate + 1회 재시도 성공
 3. runtime ack migrating -> WS 에러 응답
-4. DISCONNECTED ack rejected -> WS 로그/예외 처리
+4. LEAVE ack rejected -> WS 로그/예외 처리
 5. outbound event rid pass-through 검증

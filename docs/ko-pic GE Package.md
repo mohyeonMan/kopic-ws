@@ -1,26 +1,36 @@
-﻿# GE Package
+# GE Package
 
-스프링부트 기반 `kopic-ge`는 "게임 룰과 room runtime state의 authoritative owner"로 두는 것이 맞다.
+스프링부트 기반 `kopic-ge`는 "게임 룰과 room runtime state의 authoritative owner"다.
 핵심 원칙은 `GE`가 control plane이 아니라 runtime plane이라는 점을 유지하는 것이다.
 
-즉 `controller/service/repository` 식 범용 분류보다, GE가 맡는 runtime 책임 경계대로 패키지를 나누는 편이 유지보수에 유리하다.
+현재 기준의 GE 내부 실행 구조는 아래와 같다.
 
-`GE`는 아래 역할을 책임진다.
+- room 생성은 `Lobby -> GE lifecycle` 경로로 별도 처리한다.
+- 이미 존재하는 room에 들어오는 이벤트만 `room mailbox` 경로를 탄다.
+- command handler는 분기만 하고, 이벤트별 handler가 room job을 만든다.
+- room job은 `RoomRunner`를 통해 room별 mailbox에 적재된다.
+- 실제 상태 수정은 worker가 mailbox를 drain하면서 수행한다.
+- 후속 작업은 즉시 재-submit 또는 scheduler 등록 후 재-submit 한다.
 
-- room actor 기반 상태 소유
-- 룰 검증(권한, 상태 전이, semantic validation)
-- 턴/라운드/게임 타이머 진행
-- 점수/캔버스/정답 판정
+즉 `GE`는 아래 역할을 책임진다.
+
+- room runtime state authoritative ownership
+- room별 순차 실행 보장
+- 권한/상태 전이 검증
+- 턴/라운드/게임 진행
+- score/canvas/guess 판정
 - snapshot(`408`) 생성
 - route/joinable/presence 갱신
-- scale-in migration source/target 실행
+- migration source/target runtime 처리
 
 반대로 아래는 `GE` 책임이 아니다.
 
-- client 연결/세션 관리 (WS)
-- room entry orchestration (Lobby)
-- owner GE 선택 정책 (Lobby)
-- client-facing pre-entry API (Lobby)
+- room 생성 요청 수신과 owner GE 선택
+- client-facing pre-entry API
+- room control plane orchestration
+- WS connection/session transport 자체
+
+---
 
 ## 추천 패키지 구조
 
@@ -28,18 +38,8 @@
 io.jhpark.kopic.ge
   KopicGeApplication
 
-  common
-    error
-    id
-    time
-    json
-
   config
-    ClockConfig
-    SchedulerConfig
-    RedisConfig
-    RpcConfig
-    MessagingConfig
+    RoomRunnerConfig
 
   room
     domain
@@ -47,30 +47,36 @@ io.jhpark.kopic.ge
       RoomState
       RoomType
       Participant
+      ParticipantStatus
       GameSettings
     app
       RoomLifecycleService
-      RoomJoinService
-      RoomLeaveService
+      RoomRunner
+      RoomJob
+      RoomJobResult
+      RoomFollowUp
+      RoomSlot
+      RoomSlotRepository
       RoomRegistry
     infra
       InMemoryRoomRegistry
 
   game
     domain
-      GameState
+      Game
+      GameStatus
+      Round
       RoundState
+      Turn
       TurnState
       TurnEndReason
-      WordChoice
       ScoreBoard
+      CanvasState
       Stroke
     app
       GameStartService
-      RoundOrchestrator
       DrawCommandService
       GuessCommandService
-      TurnOrchestrator
       SnapshotService
 
   command
@@ -80,17 +86,16 @@ io.jhpark.kopic.ge
       EngineAck
     app
       EngineCommandDispatcher
-      CommandValidator
+      RoomEventType
+      RoomEventContext
+      RoomEventHandler
+      RoomEventHandlerRegistry
+      AbstractRoomEventHandler
 
   outbound
-    dto
-      EngineOutboundEvent
-      TargetedDelivery
     app
       OutboundPublisher
       AudienceResolver
-    infra
-      RabbitOutboundPublisher
 
   directory
     app
@@ -98,124 +103,184 @@ io.jhpark.kopic.ge
       RoomCodeIndexUpdater
       RandomJoinableIndexUpdater
       EnginePresencePublisher
-    infra
-      RedisRoomRoutingStore
-      RedisRoomCodeStore
-      RedisJoinableStore
-      RedisPresenceStore
 
   migration
-    domain
-      MigrationState
-      MigrationSnapshot
-      MigrationResult
     app
       MigrationSourceService
       MigrationTargetService
       MigrationOwnerPointerUpdater
-    infra
-      InternalMigrationClient
-
-  api
-    internal
-      EngineCommandController
-      MigrationController
-      HealthController
-
-  observability
-    metric
-    tracing
-    audit
 ```
+
+---
 
 ## 핵심 설계 원칙
 
-### 1. `room actor 1개 = room 1개`
+### 1. room 생성과 room 이벤트 실행을 분리한다
 
-- 동일 `roomId`의 모든 명령은 동일 actor(mailbox)로 직렬 처리한다.
-- actor별 전용 스레드는 두지 않고, shared worker pool + running flag(CAS)로 순차 실행 보장.
-- GE 내부에서 순차성을 보장하고, WS/네트워크는 at-most-once 전제에서 동작한다.
+- room 생성은 아직 mailbox 대상 room이 없으므로 `Lobby -> GE lifecycle` 경로로 처리한다.
+- `createPrivateRoom`, `createRandomRoom`은 `RoomLifecycleService`가 `Room`과 `RoomSlot`을 만들고 repository에 등록한다.
+- 그 이후에 들어오는 기존 room 대상 요청만 `RoomRunner.submit(roomId, job)` 구조를 탄다.
 
-### 1.1 round 진행은 독립 상태로 관리
+즉 `create room`은 lifecycle이고, `mutate existing room`은 runner 경로다.
 
-- `GameState` 안에서 `round`를 단순 숫자로만 두지 않고 `RoundState`로 명시한다.
-- `RoundOrchestrator`는 `ROUND_STARTED(303)`/`ROUND_ENDED(306)` 발행과 다음 round 전환(4초 지연)을 책임진다.
-- 턴 종료 집합이 round 종료 조건을 만족하면 round 상태를 종료시키고 다음 round 또는 game 종료로 전이한다.
+### 2. room별 순차 실행은 RoomRunner가 보장한다
 
-### 2. 검증 책임은 GE가 최종 소유
+- 동일 `roomId`의 모든 job은 동일 `RoomSlot.mailbox`로 들어간다.
+- `RoomRunner`는 slot을 찾아 job enqueue만 한다.
+- slot이 실행 중이 아니면 executor에 `drain(slot)` 작업 하나를 등록한다.
+- worker는 mailbox를 끝까지 비운 뒤 종료한다.
 
-- WS는 envelope/세션/전역 rate-limit까지만 검증.
-- GE는 이벤트별 payload 의미 검증과 상태 전이 검증을 담당.
-- 예: `DRAW_STROKE` drawer 검증, `WORD_CHOICE` 제한시간 검증, `GAME_START_REQUEST` 상태 검증.
+즉 executor는 queue들을 감시하지 않는다.
+`RoomRunner`가 필요할 때만 executor에 "이 slot mailbox를 비워라"라고 요청한다.
 
-### 3. outbound recipient 계산은 GE 책임
+### 3. authoritative state는 RoomSlot 안의 mutable Room이다
 
-- 누가 어떤 이벤트를 받아야 하는지는 GE가 계산한다.
-- WS는 전달만 담당하고 audience rule을 알지 않는다.
-- 예: 정답자/drawer 전용 메시지, 미정답자 공개 메시지.
+- `RoomSlot`은 `Room + mailbox + running + lastTouchedAt`를 가진다.
+- `Room`은 immutable snapshot이 아니라 mutable authoritative state로 본다.
+- `Game`, `Round`, `Turn`도 같은 방향으로 mutable state entity로 다룬다.
+- runner 밖에서 직접 수정하면 안 되고, mailbox 안에서 실행되는 room job만 수정할 수 있다.
 
-### 4. Redis key lifecycle owner는 GE
+즉 thread-safety의 핵심은 immutable 복사가 아니라 `room별 단일 실행 보장`이다.
 
-- `room:{roomId}:owner`
-- `room:code:{roomCode}`
-- `rooms:random:joinable`
+### 4. WS lifecycle는 GE 내부 room join/leave로 변환한다
 
-위 키들의 생성/삭제/갱신은 room runtime 사실을 알고 있는 GE가 수행한다.
+- WS는 transport/session 관점에서 `JOIN`, `LEAVE` lifecycle 이벤트를 GE에 전달한다.
+- GE는 이를 내부적으로 room 도메인 의미인 `ROOM_JOIN`, `ROOM_LEAVE`로 취급한다.
+- 즉 WS의 연결 사건을 그대로 쓰지 않고, GE 안에서는 방 참여/이탈 의미를 기준으로 본다.
 
-### 5. 확정된 운영 기본값
+### 5. handler는 분기와 job 조립만 담당한다
 
-- room capacity
-  - `RANDOM`: 8명 고정
-  - `PRIVATE`: room 생성 요청 시 전달받은 capacity 사용
-- random auto-start는 인원 기준으로만 판단한다(기본 2명 이상).
-- command dedup TTL 기본값은 30초, 필요 시 60초까지 상향한다.
-- migration payload는 별도 문서 스키마보다 source/target 공용 DTO 계약을 우선한다.
+- `EngineCommandDispatcher`는 event code를 `RoomEventType`으로 변환한다.
+- session lifecycle은 `JOIN/LEAVE`를 내부 `ROOM_JOIN/ROOM_LEAVE`로 변환한다.
+- registry에서 해당 handler를 찾는다.
+- handler는 payload/context를 읽고 room job을 만든다.
+- 실제 room 상태 수정은 직접 하지 않고 `RoomRunner.submit(...)`에 맡긴다.
 
-## 내부 API 경계(권장)
+즉 역할은 아래와 같이 분리된다.
 
-GE로 들어오는 입력은 두 종류로 고정한다.
+- `dispatcher = 분기`
+- `handler = room job 조립`
+- `runner = room mailbox 적재`
+- `worker = 실제 실행`
 
-1. runtime command (WS -> GE)
-- `EngineEnvelopeRequest(roomId, userId, occurredAt, envelope)`
+### 6. 권한 검증은 현재 room 상태 기준으로 mailbox 안에서 수행한다
 
-2. session lifecycle (WS -> GE)
-- `SessionLifecycleEvent(roomId, userId, occurredAt, type=CONNECTED|DISCONNECTED)`
+- host 여부
+- drawer 여부
+- current turn/phase 검증
+- 이미 정답 처리된 사용자 여부
 
-GE에서 나가는 출력도 두 종류로 분리한다.
+이런 검증은 stale state를 피하기 위해 runner 안에서 해야 한다.
 
-1. RPC ack/error (WS로 즉시 응답)
-2. async outbound event (`301~408`, `3 ERROR`) publish
+반면 아래는 바깥에서 가능하다.
 
-관련 계약 문서:
+- payload 형식 검증
+- enum parse
+- null/빈 문자열 확인
+- transport-level rate-limit
 
-- `docs/ko-pic GE Internal API Contract v0.md` (WS <-> GE)
-- `docs/ko-pic Lobby-GE Internal API Contract v0.md` (Lobby <-> GE)
+### 7. follow-up은 다시 runner 경로로 들어와야 한다
+
+job 실행 결과로 아래 두 가지가 생길 수 있다.
+
+- 즉시 후속 작업
+- 몇 초 뒤 후속 작업
+
+이때 후속 작업은 직접 함수 호출로 이어붙이지 않는다.
+반드시 다시 `RoomRunner.submit(roomId, nextJob)` 경로를 타게 한다.
+
+즉:
+
+- 즉시 follow-up -> 바로 submit
+- 지연 follow-up -> scheduler에 등록 후 시간이 되면 submit
+
+이 구조 덕분에 턴/라운드/게임 전이를 mailbox 순서 안에서 일관되게 처리할 수 있다.
+
+예:
+
+- 턴 종료 -> 3초 뒤 다음 턴
+- 라운드 종료 -> 4초 뒤 다음 라운드
+- 게임 종료 -> 8초 뒤 결과 화면 종료
+
+### 8. RoomJobResult는 호출자용 결과가 아니라 worker 내부 제어 신호다
+
+`RoomJobResult`는 `future` 대체물이 아니다.
+호출자가 기다리기 위한 값도 아니다.
+
+이 값은 worker가 job을 실행한 뒤 runner에게 아래 정보를 알려주기 위해 쓴다.
+
+- 이 slot을 유지할지 삭제할지
+- follow-up job이 있는지
+- follow-up이 즉시인지 지연인지
+
+즉 비동기 구조와 충돌하지 않는다.
+호출자는 여전히 fire-and-forget이고, `RoomJobResult`는 worker 내부 후처리용 값이다.
+
+### 9. room 삭제 정책은 도메인 정책과 운영 정책을 분리해 본다
+
+현재 논의 기준으로는 아래가 자연스럽다.
+
+- `RANDOM`
+  - empty 상태를 유지할지 즉시 삭제할지는 join policy와 joinable index 정책에 맞춰 결정한다.
+- `PRIVATE`
+  - idle TTL 기준 cleanup 가능
+
+`lastTouchedAt`는 idle cleanup의 기준으로 유지한다.
+
+정책 자체는 바뀔 수 있지만, 구조적으로는 `RoomJobResult`의 outcome과 cleanup scheduler로 양쪽 모두 처리 가능하게 둔다.
+
+---
+
+## 실행 흐름
+
+### 1. room 생성
+
+1. Lobby가 GE에 private/random room 생성을 요청한다
+2. `RoomLifecycleService`가 `Room` 생성
+3. `RoomSlot` 생성
+4. `RoomSlotRepository`에 저장
+5. room 정보 반환
+
+### 2. 기존 room 대상 이벤트
+
+1. WS/GE command 수신
+2. dispatcher가 event code를 `RoomEventType`으로 변환
+3. registry에서 handler 조회
+4. handler가 room job 생성
+5. `RoomRunner.submit(roomId, job)`
+6. `RoomSlot.mailbox`에 enqueue
+7. worker가 drain하면서 room 상태 검증/수정
+8. 결과로 follow-up 있으면 즉시 submit 또는 scheduler 등록
+
+---
 
 ## 피해야 할 구조
 
-- WS처럼 transport concern이 GE 내부에 섞이는 구조
-- 하나의 giant service가 join/draw/guess/timer/migration을 모두 처리하는 구조
-- actor 우회 직접 상태 수정 (thread-safe 보장 붕괴)
-- Lobby가 owner인 것처럼 route/joinable을 GE 밖에서 갱신하는 구조
-- migration에서 target prepare 전에 owner pointer를 먼저 갱신하는 구조
+- room 생성까지 runner/event enum에 억지로 넣는 구조
+- handler가 repository를 직접 수정하는 구조
+- handler가 room current state를 직접 읽고 권한 검증까지 끝내는 구조
+- follow-up을 직접 함수 호출로 연결하는 구조
+- room runner 밖에서 mutable room/game/turn을 직접 수정하는 구조
+- executor가 모든 room queue를 상시 스캔하는 구조
 
-## 구현 우선순위 제안
+---
+
+## 현재 기준 구현 우선순위
 
 ### Phase 1
 
-- room registry + actor mailbox
-- join/leave, game start, draw/guess/word-choice
-- 301/302/304/305/401/403/404/405/406/408 발행
-- route/joinable/presence 최소 갱신
+- `RoomSlot`, `RoomSlotRepository`, `RoomRunner`, `RoomJobResult`, scheduler 뼈대
+- dispatcher -> event handler -> runner 경로 정리
+- room 생성은 lifecycle 경로로 유지
 
 ### Phase 2
 
-- random/private room lifecycle 정책 고도화
-- 에러코드 정밀화 및 rate-limit 연동
-- metrics/tracing 추가
+- join/leave/game start/draw/guess/snapshot 이벤트를 handler 기반으로 이관
+- follow-up으로 turn/round/game 전이 연결
+- joinable/route/presence 갱신 정리
 
 ### Phase 3
 
-- scale-in migration source/target 구현
-- owner pointer CAS, 실패 복구 시나리오
-- 운영성 강화(관리 API, 대시보드)
+- random/private 삭제 정책 정교화
+- cleanup scheduler 정리
+- migration/runtime 운영성 강화

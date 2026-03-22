@@ -1,4 +1,4 @@
-﻿# ko-pic GE Domain Model v0 (Draft)
+# ko-pic GE Domain Model v0 (Draft)
 
 ## 1. 목적
 

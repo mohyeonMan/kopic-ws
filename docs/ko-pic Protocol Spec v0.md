@@ -1,4 +1,4 @@
-﻿# ko-pic Protocol Spec v0 (MVP v0.2)
+# ko-pic Protocol Spec v0 (MVP v0.2)
 
 ## 1. 목적
 
@@ -119,13 +119,12 @@
 
 - client-originated `ROOM_JOIN` 이벤트는 사용하지 않는다.
 - `roomId`는 WS handshake 컨텍스트에서 받는다.
-- 실제 join 처리는 WS가 `afterConnectionEstablished` 단계에서 내부적으로 GE에 전달한다.
+- 실제 join 처리는 WS가 `afterConnectionEstablished` 단계에서 내부 `JOIN` lifecycle 이벤트로 GE에 전달한다.
 
-### 103 ROOM_LEAVE
+### 103 RESERVED
 
-```json
-{ "e": 103, "rid": "c-3", "p": {} }
-```
+- client-originated `ROOM_LEAVE` 이벤트는 사용하지 않는다.
+- 사용자가 방에서 나가면 WS 세션을 종료하고, WS는 내부 `LEAVE` lifecycle 이벤트를 GE에 전달한다.
 
 ### 105 GAME_START_REQUEST
 

@@ -43,17 +43,17 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleConnected(WsSession session) {
-		log.info("dispatch connected userId={} roomId={}", session.getUserId(), session.getRoomId());
+		log.info("dispatch join userId={} roomId={}", session.getUserId(), session.getRoomId());
 		EngineAck ack = sendWithOwnerRetry(
 			session.getRoomId(),
 			() -> gameEngineClient.send(new SessionLifecycleEvent(
 			session.getRoomId(),
 			session.getUserId(),
 			session.getConnectedAt(),
-			SessionLifecycleType.CONNECTED
+			SessionLifecycleType.JOIN
 		))
 		);
-		rejectIfNeeded(ack, "engine rejected connect");
+		rejectIfNeeded(ack, "engine rejected join");
 	}
 
 	@Override
@@ -82,18 +82,18 @@ public class DefaultCommandDispatchService implements CommandDispatchService {
 
 	@Override
 	public void handleDisconnected(WsSession session) {
-		log.info("dispatch disconnected userId={} roomId={}", session.getUserId(), session.getRoomId());
+		log.info("dispatch leave userId={} roomId={}", session.getUserId(), session.getRoomId());
 		EngineAck ack = sendWithOwnerRetry(
 			session.getRoomId(),
 			() -> gameEngineClient.send(new SessionLifecycleEvent(
 			session.getRoomId(),
 			session.getUserId(),
 			session.getLastSeenAt(),
-			SessionLifecycleType.DISCONNECTED
+			SessionLifecycleType.LEAVE
 		))
 		);
 		if (!ack.accepted()) {
-			throw new EngineRequestRejectedException("engine rejected disconnect", ack.reason());
+			throw new EngineRequestRejectedException("engine rejected leave", ack.reason());
 		}
 	}
 

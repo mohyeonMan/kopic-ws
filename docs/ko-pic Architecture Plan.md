@@ -1,4 +1,4 @@
-﻿# ko-pic k3s Architecture Plan (Draft v0.2)
+# ko-pic k3s Architecture Plan (Draft v0.2)
 
 ## 1. 목표
 
