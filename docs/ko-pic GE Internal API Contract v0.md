@@ -4,7 +4,7 @@
 
 이 문서는 MVP 기준 `WS <-> GE` 내부 API 계약을 고정한다.
 
-- 범위: WS->GE command RPC, WS->GE session lifecycle RPC, GE->WS outbound event
+- 범위: WS->GE gRPC command, WS->GE gRPC session lifecycle, GE->WS outbound event
 - 기준 소스:
   - `../kopic-ws/src/main/java/io/jhpark/kopic/ws/engine/app/*`
   - `../kopic-ws/src/main/java/io/jhpark/kopic/ws/dispatch/app/DefaultCommandDispatchService.java`
@@ -22,14 +22,20 @@
 
 1. WS는 envelope transport를 담당하고, GE는 도메인 검증/상태 전이를 담당한다.
 2. WS->GE 동기 RPC 응답은 `ack/error` 의미만 가진다.
-3. 클라이언트-facing 상태 이벤트(`301~408`, `3`)는 GE->WS 비동기 outbound 경로로 전달한다.
+3. 클라이언트-facing 상태 이벤트(`301~309`, `401~408`, `3`)는 GE->WS 비동기 outbound 경로로 전달한다.
 4. `rid`는 WS/GE 내부 DTO에서도 동일 키(`rid`)로 취급하며 가능하면 그대로 보존한다.
+5. GE 구현 내부에서는 WS/GE 입력 이벤트와 GE->WS 발행 이벤트를 별도 분류로 관리한다.
+   입력 이벤트는 `GameFlowService.dispatch(...)` 대상이고, 발행 이벤트는 outbound publisher 대상이다.
 
 ---
 
 ## 3. WS -> GE RPC 계약
 
 ## 3.1 Runtime Envelope 요청
+
+gRPC service / method:
+
+- `kopic.ge.ws.v1.WsRpcService/HandleEnvelope`
 
 WS 코드 기준 DTO:
 
@@ -62,9 +68,13 @@ public record ClientEnvelope(
 ### 이벤트 입력 범위
 
 - `1`(PING)은 WS에서 `2`(PONG)으로 처리하고 GE로 전달하지 않는다.
-- 나머지 runtime 이벤트(`103`, `105`, `106`, `201`, `202`, `204`, `205`)는 GE로 전달한다.
+- runtime 이벤트(`105`, `106`, `107`, `201`, `202`, `204`, `205`)는 GE로 전달한다.
 
 ## 3.2 Session Lifecycle 요청
+
+gRPC service / method:
+
+- `kopic.ge.ws.v1.WsRpcService/HandleSessionLifecycle`
 
 WS 코드 기준 DTO:
 
@@ -73,7 +83,8 @@ public record SessionLifecycleEvent(
     String roomId,
     String userId,
     Instant occurredAt,
-    SessionLifecycleType type
+    SessionLifecycleType type,
+    JsonNode payload
 ) {}
 ```
 
@@ -88,6 +99,17 @@ public enum SessionLifecycleType {
 
 - `JOIN`: WS `afterConnectionEstablished` 직후 내부 room join 트리거
 - `LEAVE`: WS 연결 종료 또는 명시적 세션 종료 직후 내부 room leave 트리거
+- `payload`: lifecycle 부가 정보. MVP에서는 `JOIN`일 때 `nickname`을 필수로 담는다.
+- `wsNodeId`는 선택값이다. WS가 알고 있으면 함께 전달하고, GE는 이를 session presence에 반영한다.
+
+세션 라우팅 정책:
+
+- `userId -> wsNodeId`는 Redis를 authoritative source로 둔다.
+- Redis key는 `session:presence:user:{userId}` 형식을 사용한다.
+- GE outbound는 userId 목록을 먼저 결정한 뒤, Redis presence를 조회해 node routing을 결정한다.
+- 조회 비용 절감을 위해 GE 내부에서는 짧은 TTL의 Caffeine cache를 앞단에 둔다.
+- 현재 기본 cache TTL은 `5초`다.
+- room domain의 `Participant`는 transport routing 정보를 직접 보관하지 않는다.
 
 MVP 정책상 재접속 유예는 없고, disconnect는 즉시 leave로 처리한다.
 
@@ -140,10 +162,10 @@ WS 구현 기준(`DefaultCommandDispatchService`) 처리 규칙:
 WS 에러 매핑(`WebSocketConnectionHandler`) 현재값:
 
 - `NOT_OWNER` -> `ERROR(3)` with `code=902`, `message=ROOM_NOT_FOUND`
-- `MIGRATING` -> `ERROR(3)` with `code=909`, `message=MIGRATING`
+- `MIGRATING` -> `ERROR(3)` with `code=912`, `message=ROOM_MIGRATING`
 - 기타 -> `ERROR(3)` with `code=909`, `message=INTERNAL_ERROR`
 
-참고: 위 에러 매핑은 현재 구현값이며, 추후 프로토콜 코드 정합화 시 별도 개정한다.
+참고: `MIGRATING`은 내부 ack reason이지만, 클라이언트-facing error code는 protocol의 `912 ROOM_MIGRATING`으로 매핑하는 것이 정합적이다.
 
 ---
 
@@ -171,14 +193,13 @@ public record ServerEnvelope(
 - `userId`: delivery 대상 사용자
 - `e/p/rid`: 클라이언트 outbound 이벤트를 내부에서도 동일 키로 유지
 
-MQ 라우팅 규칙:
+현재 구현 기준 outbound 라우팅:
 
-- exchange: `kopic.engine.outbound`
-- routing key prefix: `ws.node.`
-- queue prefix: `kopic.ws.node.`
-- 최종 routing key: `ws.node.{nodeId}`
-
-GE는 room audience 계산 결과를 user 단위 targeted event로 publish한다.
+- GE는 room audience 계산 결과를 user 단위 targeted event로 만든다.
+- `BroadcastService`는 userId 목록을 받아 session presence로 `wsNodeId`를 resolve한다.
+- `TargetedDelivery`에는 `userId`, `wsNodeId`, `ServerEnvelope`가 담긴다.
+- 현재 `OutboundPublisher` 구현은 `LoggingOutboundPublisher`이며, 실제 MQ publish 대신 `wsNodeId`까지 포함해 로그를 남긴다.
+- 실제 MQ publisher를 붙일 때는 이 `wsNodeId`를 기준으로 node routing key를 만들면 된다.
 
 ---
 

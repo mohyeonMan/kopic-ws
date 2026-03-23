@@ -133,16 +133,18 @@ request:
 ```json
 {
   "userId": "u-1",
-  "name": "jihoon"
+  "nickname": "jihoon",
+  "capacity": 8
 }
 ```
 
 필드:
 
 - `userId`: string, required
-- `name`: string, required
+- `nickname`: string, required
+- `capacity`: int, required
 - private room의 초기 게임 설정은 request에서 받지 않는다.
-- owner GE가 기본 설정으로 room을 생성한다.
+- owner GE가 기본 설정과 입력받은 최대 인원수로 room을 생성한다.
 
 response `201 Created`:
 
@@ -176,21 +178,22 @@ response `201 Created`:
 
 - join 가능한 existing random room을 우선 탐색한다.
 - 적합한 room이 없으면 owner GE에 새 random room 생성을 요청한다.
-- 최종 join 승인 권한은 owner GE에 있다.
+- 최종 join 가능 여부 판단 권한은 owner GE에 있다.
+- 실제 participant 반영은 WS 연결 후 `afterConnectionEstablished` 단계의 internal `JOIN` lifecycle에서 수행한다.
 
 request:
 
 ```json
 {
   "userId": "u-2",
-  "name": "guest-1"
+  "nickname": "guest-1"
 }
 ```
 
 필드:
 
 - `userId`: string, required
-- `name`: string, required
+- `nickname`: string, required
 
 response `200 OK`:
 
@@ -232,10 +235,11 @@ response `200 OK`:
 
 1. `Lobby`가 Redis의 `rooms:random:joinable`에서 후보 room을 조회한다.
 2. 각 후보의 `roomId -> ownerEngineId`를 조회한다.
-3. owner GE에 실제 join 가능 여부를 질의한다.
-4. GE가 join 승인 시 participant 반영과 route/joinable 갱신을 수행한다.
-5. 모든 후보가 실패하면 `Lobby`가 owner GE를 고르고 새 random room 생성을 요청한다.
-6. GE가 새 random room 생성에 성공하면 route/joinable을 반영한다.
+3. owner GE에 현재 시점의 실제 join 가능 여부를 질의한다.
+4. GE가 승인하면 `Lobby`는 해당 `roomId` entry를 반환한다.
+5. participant 반영은 이후 WS 연결 후 internal `JOIN` lifecycle에서 owner GE가 수행한다.
+6. 모든 후보가 실패하면 `Lobby`가 owner GE를 고르고 새 random room 생성을 요청한다.
+7. GE가 새 random room 생성에 성공하면 route/joinable을 반영한다.
 
 에러:
 

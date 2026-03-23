@@ -216,16 +216,16 @@
 - `DRAW_STROKE`, `DRAW_CLEAR`, `WORD_CHOICE`는 drawer만 허용
 
 2. 레이트리밋
-- `DRAW_STROKE`: 사용자당 초당 최대 20회, 메시지 최대 8KB
+- `DRAW_STROKE`: 사용자당 초당 최대 30회, 메시지 최대 8KB
 - `GUESS_SUBMIT`: 사용자당 초당 최대 5회
 
 3. 상태 전환 지연
-- 턴 종료 후 3초
-- 라운드 종료 후 4초
+- 턴 종료 후 3초 뒤 다음 턴 시작
+- 라운드 종료 후 즉시 다음 라운드 시작
 - 게임 종료 후 결과 화면 8초
 
 4. 스냅샷
-- 입장 성공 직후 `301 + 408`을 GE가 비동기 outbound event로 발행
+- 입장 성공 직후 기존 participant에게 `301`, joiner에게 `408`을 GE가 비동기 outbound event로 발행
 - 불일치 복구 시 `106 -> 408`
 
 5. 세션 위치 메타데이터
@@ -397,4 +397,5 @@
 - room 상태는 최소 `LOBBY`, `RUNNING`, `MIGRATING`, `CLOSED`를 갖는 방향이 적절하다.
 - `MIGRATING` 상태 room은 새 게임 시작을 막고 handoff 완료/실패에 따라 `LOBBY` 또는 제거로 전이한다.
 - 마지막 participant가 떠난 뒤 room 제거 여부는 GE 정책으로 정한다.
-- `private` room은 0명 상태에서 idle TTL을 두고 제거할 수 있고, `random` room은 0명 즉시 제거해도 된다.
+- `private` room은 0명 상태가 되면 30초 뒤 제거한다.
+- `random` room은 0명 상태가 되면 즉시 제거한다.

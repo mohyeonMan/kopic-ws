@@ -7,13 +7,13 @@
 1. [ko-pic Architecture Plan.md](./ko-pic%20Architecture%20Plan.md)
 2. [ko-pic Game Rules.md](./ko-pic%20Game%20Rules.md)
 3. [ko-pic Protocol Spec v0.md](./ko-pic%20Protocol%20Spec%20v0.md)
-4. [ko-pic Lobby API Spec v0.md](./ko-pic%20Lobby%20API%20Spec%20v0.md)
-5. [ko-pic WS Package.md](./ko-pic%20WS%20Package.md)
-6. [ko-pic GE Package.md](./ko-pic%20GE%20Package.md)
+4. [ko-pic Lobby API Spec v0.md](./lobby/ko-pic%20Lobby%20API%20Spec%20v0.md)
+5. [ko-pic WS Package.md](./ws/ko-pic%20WS%20Package.md)
+6. [ko-pic GE Package.md](./ge/ko-pic%20GE%20Package.md)
 7. [ko-pic GE Internal API Contract v0.md](./ko-pic%20GE%20Internal%20API%20Contract%20v0.md)
-8. [ko-pic Lobby-GE Internal API Contract v0.md](./ko-pic%20Lobby-GE%20Internal%20API%20Contract%20v0.md)
-9. [ko-pic GE Domain Model v0.md](./ko-pic%20GE%20Domain%20Model%20v0.md)
-10. [ko-pic Lobby Package.md](./ko-pic%20Lobby%20Package.md)
+8. [ko-pic Lobby-GE Internal API Contract v0.md](./ge/ko-pic%20Lobby-GE%20Internal%20API%20Contract%20v0.md)
+9. [ko-pic GE Domain Model v0.1.md](./ge/ko-pic%20GE%20Domain%20Model%20v0.1.md)
+10. [ko-pic Lobby Package.md](./lobby/ko-pic%20Lobby%20Package.md)
 
 ## 이번에 추가된 GE 문서
 
@@ -23,7 +23,7 @@
   - 내부 API/포트 경계
   - 구현 우선순위
 
-- `ko-pic GE Domain Model v0.md`
+- `ko-pic GE Domain Model v0.1.md`
   - 최소 aggregate/value object
   - command/event 모델
   - 상태 전이/에러 코드 매핑

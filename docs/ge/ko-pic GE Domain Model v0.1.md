@@ -36,6 +36,7 @@
 - `Room.settings`와 `Game.settings`는 둘 다 유지한다.
 - `Room.settings`는 lobby/waiting 상태의 다음 게임 설정이다.
 - `Game.settings`는 게임 시작 시 복사된 현재 게임 전용 설정이다.
+- `participants`는 입장 순서를 유지해야 한다.
 - `Room`은 mutable authoritative state다.
 - 단, runner/mailbox 밖에서 직접 수정하면 안 된다.
 
@@ -46,13 +47,12 @@
 방 참가자 정보다.
 
 - `userId`
-- `name`
+- `nickname`
 - `status`
-- `wsNodeId`
 
 ### Participant 주석
 
-- `status`, `wsNodeId`는 MVP 규칙만 보면 과할 수 있다.
+- `status`는 MVP 규칙만 보면 과할 수 있다.
 - 하지만 참가자 추적/세션 연계 가능성을 고려해 v0.1에서는 유지한다.
 
 ---
@@ -80,6 +80,7 @@
 - `drawSec`
 - `wordChoiceSec`
 - `wordChoiceCount`
+- `drawerOrderMode`
 - `endMode`
 
 ### GameSettings 주석
@@ -122,6 +123,7 @@
 - `state`
   - `RUNNING | ENDED`
 - `turnCursor`
+- `drawerOrder: List<UserId>`
 - `currentTurn: Turn`
 - `startedAt`
 - `endedAt`
@@ -132,6 +134,8 @@
 - 현재 라운드 상태와 전이에 집중한다.
 - `READY` 상태는 두지 않는다.
 - 라운드 시작 전 대기 개념은 scheduler/transition으로 처리한다.
+- `drawerOrder`는 라운드 시작 시점에 한 번 확정한다.
+- 중간입장자는 현재 라운드 `drawerOrder`에 포함되지 않는다.
 
 ---
 
@@ -141,25 +145,41 @@
 
 - `turnId`
 - `drawerUserId`
-- `secretWord`
-- `wordChoices: List<String>`
 - `state`
   - `WORD_CHOICE | DRAWING | ENDED`
 - `correctUserIds: Set<UserId>`
+- `pendingScores: Map<UserId, Integer>`
 - `endReason`
   - `FIRST_CORRECT | ALL_CORRECT | TIMEOUT | DRAWER_LEFT`
-- `canvas: CanvasState`
-- `startedAt`
-- `endsAt`
-- `endedAt`
+- `phase: TurnPhase`
 
 ### Turn 주석
 
-- `wordChoices`는 `WORD_CHOICES -> WORD_CHOICE -> TURN_STARTED` 흐름 때문에 필요하다.
 - `correctUserIds`는 중복 정답 처리 방지를 위해 필요하다.
+- `pendingScores`는 이번 턴 종료 시 반영할 예정 점수를 들고 있는 임시 상태다.
 - `endReason`은 follow-up 전이와 이벤트 발행 판단에 필요하다.
-- `startedAt/endsAt`는 현재 턴 단계의 deadline이다.
+- phase마다 필요한 필드를 `Turn`에 평면으로 두지 않고 `TurnPhase`로 분리한다.
 - `Turn`도 mutable authoritative state다.
+
+### TurnPhase
+
+- `WordChoicePhase`
+  - `wordChoices`
+  - `startedAt`
+  - `endsAt`
+- `DrawingPhase`
+  - `secretWord`
+  - `canvas`
+  - `startedAt`
+  - `endsAt`
+- `EndedPhase`
+  - `endedAt`
+
+### TurnPhase 주석
+
+- `startedAt/endsAt` 의미가 phase마다 달라지기 때문에 phase 객체로 분리한다.
+- `wordChoices`는 `WordChoicePhase`에만 있고, `canvas`와 `secretWord`는 `DrawingPhase`에만 있다.
+- `endedAt`는 `EndedPhase`에 둔다.
 
 ---
 
@@ -217,9 +237,10 @@ v0.1 기준으로 아래를 전제로 한다.
 - `Room.state == RUNNING`이면 `Room.currentGame != null`
 - 게임 시작 시 `Room.settings`를 복사해 `Game.settings`로 고정한다
 - 게임 진행 중에는 반드시 `Game.settings`만 참조한다
-- `Turn.state == WORD_CHOICE`이면 `wordChoices`가 비어 있으면 안 된다
-- `Turn.state == DRAWING`이면 `secretWord`가 확정돼 있어야 한다
-- `Turn.state == ENDED`이면 `endReason`과 `endedAt`이 있어야 한다
+- `Round.drawerOrder`는 라운드 시작 시점의 participant snapshot을 기반으로 만든다
+- `Turn.state == WORD_CHOICE`이면 `phase`는 `WordChoicePhase`여야 하고 `wordChoices`가 비어 있으면 안 된다
+- `Turn.state == DRAWING`이면 `phase`는 `DrawingPhase`여야 하고 `secretWord`가 확정돼 있어야 한다
+- `Turn.state == ENDED`이면 `phase`는 `EndedPhase`여야 하고 `endReason`과 `endedAt`이 있어야 한다
 - `Turn.correctUserIds`에는 `drawerUserId`가 들어가면 안 된다
 
 ---
@@ -229,7 +250,7 @@ v0.1 기준으로 아래를 전제로 한다.
 이 구조는 아래 선택을 명시적으로 한 버전이다.
 
 - `Room.settings`와 `Game.settings`를 둘 다 유지
-- participant의 `status`, `wsNodeId`도 유지
+- participant의 `status`도 유지
 - 현재 진행 상태 중심 모델 채택
 - 결과 화면 유지 구간을 `Game.status`로 직접 표현
 - `Room/Game/Round/Turn`을 mailbox 안에서만 수정되는 mutable authoritative state로 간주

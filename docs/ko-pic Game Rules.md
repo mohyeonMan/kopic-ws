@@ -21,6 +21,7 @@
 - spectator 역할은 MVP에서 사용하지 않는다.
 - 입장한 사용자는 항상 `player`다.
 - 닉네임 중복 허용.
+- participant 목록은 입장 순서를 유지한다.
 
 random 규칙:
 
@@ -51,6 +52,8 @@ private 규칙:
 - 게임 시작 전/후 관계없이 즉시 player로 편입.
 - 현재 턴에서도 즉시 guess 가능.
 - 현재 턴의 drawer는 될 수 없음.
+- 현재 라운드의 drawer 순서에는 중간부터 편입되지 않는다.
+- 중간입장자는 다음 라운드부터 drawer 후보가 될 수 있다.
 
 입장 직후 동기화:
 
@@ -58,7 +61,7 @@ private 규칙:
 - 포함 정보:
   - 방 정보
   - 게임 설정
-  - 참여자 목록
+  - 참여자 목록(`userId`, `nickname`)
   - 현재 라운드/턴
   - 현재 턴 캔버스 전체 stroke 목록
 
@@ -78,11 +81,21 @@ private 규칙:
 
 - `roundCount`: 3 ~ 10
 - `drawSec`: 20 ~ 60
-- `wordChoiceSec`: 10 (고정)
+- `wordChoiceSec`: 5 ~ 15
 - `wordChoiceCount`: 3 ~ 5
+- `drawerOrderMode`:
+  - `JOIN_ORDER`
+  - `RANDOM`
 - `endMode`:
   - `FIRST_CORRECT`
   - `TIME_OR_ALL_CORRECT`
+
+대기실 설정 변경:
+
+- `private` room에서만 허용한다.
+- host만 변경할 수 있다.
+- 변경 결과는 같은 room의 다른 participant에게도 즉시 반영되어야 한다.
+- 이 변경은 `Room.settings`를 갱신하는 흐름이고, 이미 시작된 `Game.settings`를 바꾸면 안 된다.
 
 ---
 
@@ -95,16 +108,27 @@ private 규칙:
 
 턴 순서:
 
-1. `WORD_CHOICES` 전달
-2. drawer `WORD_CHOICE`
-3. `TURN_STARTED`
+1. `TURN_STARTED`
+2. drawer에게 `WORD_CHOICES` 전달
+3. 다른 participant에게 `TURN_STATE(WORD_CHOICES_GIVEN)` 전달
+4. drawer `WORD_CHOICE`
+5. drawer에게 `DRAWING_STARTED`
+6. 다른 participant에게 `TURN_STATE(DRAWING_STARTED)`
+
+라운드별 drawer 순서:
+
+- 각 라운드 시작 시 그 라운드의 `drawerOrder`를 한 번 확정한다.
+- `JOIN_ORDER`면 라운드 시작 시점의 participant 입장 순서를 그대로 사용한다.
+- `RANDOM`이면 라운드 시작 시점의 participant 목록을 무작위로 섞어 사용한다.
+- 라운드 시작 후 새로 들어온 participant는 현재 라운드 `drawerOrder`에 포함되지 않는다.
+- 새로 들어온 participant는 현재 턴부터 guess는 가능하지만, drawer는 다음 라운드부터 가능하다.
 
 drawer가 `wordChoiceSec` 내 미선택이면 서버가 랜덤 선택 후 턴 시작.
 
 전환 지연(서버 주도, 클라 ACK 대기 없음):
 
 - 턴 종료 후 다음 턴 시작까지: 3초
-- 라운드 종료 후 다음 라운드 시작까지: 4초
+- 라운드 종료 후 다음 라운드 시작까지: 즉시
 - 게임 종료 후 결과 화면 유지: 8초
 
 drawer 이탈:
@@ -134,7 +158,7 @@ drawer 이탈:
 메시지 가시성:
 
 - 미정답자 메시지: 전체 공개
-- 정답자 메시지: 정답자 + drawer에게만 공개
+- 정답 처리된 사용자 이후 메시지: 현재 턴의 정답자 집합 + drawer에게만 공개
 - drawer 메시지: 정답자 + drawer에게만 공개
 - 정답 텍스트는 미정답자에게 노출하지 않음
 
@@ -156,6 +180,12 @@ MVP 점수(더미):
 - guesser: 턴 내 첫 정답 시 `+1`
 - drawer: 정답자 1명당 `+1`
 
+점수 반영 시점:
+
+- 정답 즉시 누적 scoreboard를 바꾸지 않는다.
+- 이번 턴에서 누가 몇 점을 얻을지는 턴 내부 예정 점수로 관리한다.
+- 실제 누적 scoreboard 반영은 `TURN_ENDED` 시점에 한 번에 수행한다.
+
 결과 예외:
 
 - `FIRST_CORRECT` 모드: 첫 정답자와 drawer만 점수 획득
@@ -164,6 +194,11 @@ MVP 점수(더미):
 중간입장자:
 
 - 입장 직후 현재 턴에서 정답 시 점수 획득 가능
+
+턴 종료 표시:
+
+- `TURN_ENDED`에는 종료 사유뿐 아니라 이번 턴 획득 점수와 최신 누적 scoreboard를 함께 포함한다.
+- `TURN_ENDED` 이후 최소 3초간 이번 턴 결과를 보여준 뒤에만 다음 턴/다음 라운드/게임 종료 후속 작업으로 넘어간다.
 
 ---
 
@@ -191,12 +226,13 @@ MVP tool:
 스트로크 제한:
 
 - 1개 `DRAW_STROKE`의 `points` 최대 64개
-- 사용자당 `DRAW_STROKE` 초당 최대 20회
+- 사용자당 `DRAW_STROKE` 초당 최대 30회
 - 메시지 최대 크기 8KB
 
 `DRAW_CLEAR`:
 
 - drawer만 허용
+- 서버는 drawer 자신에게 `DRAW_STROKE`, `DRAW_CLEAR` echo를 다시 보내지 않는다.
 
 `DRAW_FINISH`:
 
@@ -211,8 +247,9 @@ MVP 정책:
 - 연결 끊김 시 즉시 leave 처리(유예시간 없음)
 - 재접속 복구 정책(동일 사용자 식별/유예 재진입)은 후속 버전에서 정의
 - 마지막 participant가 떠난 뒤 room 정리는 owner GE가 담당한다.
-- `private` room은 empty 상태가 되더라도 즉시 제거하지 않고 idle TTL 이후 정리할 수 있다.
-- `random` room은 empty 상태가 되면 즉시 제거하거나 매우 짧은 TTL 후 정리할 수 있다.
+- `private` room은 empty 상태가 되면 30초 뒤 정리한다.
+- `random` room은 empty 상태가 되면 즉시 정리한다.
+- `private` room에서 host가 나가면, 남아 있는 participant 입장 순서 기준 다음 index의 participant가 새 host가 된다.
 
 ---
 

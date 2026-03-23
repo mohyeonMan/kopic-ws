@@ -38,6 +38,10 @@
 
 ## 3.1 Private Room 생성
 
+gRPC service / method:
+
+- `kopic.ge.lobby.v1.LobbyRpcService/CreatePrivateRoom`
+
 Lobby 포트:
 
 ```java
@@ -47,7 +51,7 @@ PrivateRoomCreated createPrivateRoom(String engineId, CreatePrivateRoomCommand c
 현재 command:
 
 ```java
-record CreatePrivateRoomCommand(String userId, String name)
+record CreatePrivateRoomCommand(String userId, String nickname)
 ```
 
 ### v0 확정(정책 반영)
@@ -56,7 +60,7 @@ record CreatePrivateRoomCommand(String userId, String name)
 - 따라서 command는 아래로 확장 권장:
 
 ```java
-record CreatePrivateRoomCommand(String userId, String name, int capacity)
+record CreatePrivateRoomCommand(String userId, String nickname, int capacity)
 ```
 
 검증:
@@ -71,6 +75,10 @@ record CreatePrivateRoomCommand(String userId, String name, int capacity)
 
 ## 3.2 Random Room 생성
 
+gRPC service / method:
+
+- `kopic.ge.lobby.v1.LobbyRpcService/CreateRandomRoom`
+
 Lobby 포트:
 
 ```java
@@ -80,7 +88,7 @@ RandomRoomCreated createRandomRoom(String engineId, CreateRandomRoomCommand comm
 command:
 
 ```java
-record CreateRandomRoomCommand(String userId, String name)
+record CreateRandomRoomCommand(String userId, String nickname)
 ```
 
 정책:
@@ -94,6 +102,10 @@ record CreateRandomRoomCommand(String userId, String name)
 
 ## 3.3 Random Quick-Join 승인
 
+gRPC service / method:
+
+- `kopic.ge.lobby.v1.LobbyRpcService/TryJoinRandomRoom`
+
 Lobby 포트:
 
 ```java
@@ -103,7 +115,7 @@ QuickJoinResult tryJoinRandomRoom(String engineId, String roomId, JoinUserComman
 command:
 
 ```java
-record JoinUserCommand(String userId, String name)
+record JoinUserCommand(String userId, String nickname)
 ```
 
 응답:
@@ -114,8 +126,10 @@ record QuickJoinResult(boolean joined, boolean created, RoomEntry roomEntry)
 
 규칙:
 
-- `joined=true`면 GE가 participant 반영을 완료한 상태여야 한다.
-- join 성공 후 route/joinable 반영도 GE가 수행한다.
+- `joined=true`는 "현재 시점에 quick-join 대상으로 선택 가능하다"는 뜻이다.
+- 이 단계에서 participant를 room state에 반영하지는 않는다.
+- 실제 participant 반영은 클라이언트가 WS에 연결한 뒤 `afterConnectionEstablished` 시점의 internal `JOIN` lifecycle에서 수행한다.
+- 신규 random room 생성 성공 후 route/joinable 반영은 GE가 수행한다.
 - `joined=false`면 Lobby는 다음 후보 room 재시도 또는 신규 random 생성으로 fallback.
 
 권장 보강(v1 후보):
